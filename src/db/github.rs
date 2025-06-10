@@ -1,16 +1,9 @@
 use ehttp::{self};
+use idb::{ObjectStoreParams, Factory, DatabaseEvent};
+use wasm_bindgen_futures::spawn_local;
+use wasm_bindgen::JsValue;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
-
-// WASM-only imports
-#[cfg(target_arch = "wasm32")]
-use ehttp::Mode;
-#[cfg(target_arch = "wasm32")]
-use idb::{Database, ObjectStoreParams, Factory, DatabaseEvent};
-#[cfg(target_arch = "wasm32")]
-use wasm_bindgen_futures::spawn_local;
-#[cfg(target_arch = "wasm32")]
-use web_sys::wasm_bindgen::JsValue;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Owner {
@@ -141,7 +134,6 @@ impl GithubDb {
         Arc::clone(&self.is_loading)
     }
 
-    #[cfg(target_arch = "wasm32")]
     pub fn sync_and_store(&self) {
         let repos = Arc::clone(&self.repos);
         let error = Arc::clone(&self.error);
@@ -152,9 +144,8 @@ impl GithubDb {
             url: String::from("https://api.github.com/search/repositories?q=language:rust&sort=stars&order=desc&per_page=100"),
             body: vec![],
             headers: ehttp::Headers::new(&[("User-Agent", "rust-egui-ehttp-app")]),
-            #[cfg(target_arch = "wasm32")]
-            mode: Mode::Cors,
         };
+        
         ehttp::fetch(request, move |result: ehttp::Result<ehttp::Response>| {
             *is_loading.lock().unwrap() = false;
             match result {
@@ -162,22 +153,21 @@ impl GithubDb {
                     if response.ok {
                         match response.json::<SearchResponse>() {
                             Ok(search_response) => {
+
+                                // Fix use-after-move error: clone filtered_repos for both uses
                                 let filtered_repos = search_response
                                     .items
                                     .into_iter()
                                     .filter(|repo| repo.license.is_some())
                                     .collect::<Vec<_>>();
-                                // Only clone if we need to use in async closure
-                                let filtered_repos_for_store = filtered_repos.clone();
-                                *repos.lock().unwrap() = filtered_repos;
-                                #[cfg(target_arch = "wasm32")]
-                                {
-                                    spawn_local(async move {
-                                        if let Err(e) = Self::store_repos_in_indexeddb(&filtered_repos_for_store).await {
-                                            *error.lock().unwrap() = Some(format!("Failed to store in IndexedDB: {}", e));
-                                        }
-                                    });
-                                }
+                                let filtered_repos_for_mutex = filtered_repos.clone();
+                                let filtered_repos_for_async = filtered_repos_for_mutex.clone();
+                                *repos.lock().unwrap() = filtered_repos_for_mutex;
+                                spawn_local(async move {
+                                    if let Err(e) = Self::store_repos_in_indexeddb(&filtered_repos_for_async).await {
+                                        *error.lock().unwrap() = Some(format!("Failed to store in IndexedDB: {}", e));
+                                    }
+                                });
                             }
                             Err(e) => {
                                 *error.lock().unwrap() = Some(format!("Failed to parse JSON: {}", e));
@@ -194,8 +184,7 @@ impl GithubDb {
         });
     }
 
-    // WASM: Load from IndexedDB
-    #[cfg(target_arch = "wasm32")]
+    // Load from IndexedDB
     pub fn load_from_indexeddb(&self) {
         let repos = Arc::clone(&self.repos);
         let error = Arc::clone(&self.error);
@@ -211,12 +200,6 @@ impl GithubDb {
         });
     }
 
-    // Native: No-op for load_from_indexeddb
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn load_from_indexeddb(&self) {
-        // No-op on native
-    }
-
     pub fn fetch_repositories(&self) {
         if *self.is_loading.lock().unwrap() {
             return;
@@ -228,25 +211,12 @@ impl GithubDb {
 
         // Build request, with mode only on wasm32
         let request = {
-            #[cfg(target_arch = "wasm32")]
-            {
-                ehttp::Request {
-                    method: String::from("GET"),
-                    url: String::from("https://api.github.com/search/repositories?q=language:rust&sort=stars&order=desc&per_page=100"),
-                    body: vec![],
-                    headers: ehttp::Headers::new(&[("User-Agent", "rust-egui-ehttp-app")]),
-                    mode: Mode::Cors,
-                }
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            {
                 ehttp::Request {
                     method: String::from("GET"),
                     url: String::from("https://api.github.com/search/repositories?q=language:rust&sort=stars&order=desc&per_page=100"),
                     body: vec![],
                     headers: ehttp::Headers::new(&[("User-Agent", "rust-egui-ehttp-app")]),
                 }
-            }
         };
 
         ehttp::fetch(request, move |result: ehttp::Result<ehttp::Response>| {
@@ -261,13 +231,15 @@ impl GithubDb {
                                     .into_iter()
                                     .filter(|repo| repo.license.is_some())
                                     .collect::<Vec<_>>();
-                                *repos.lock().unwrap() = filtered_repos;
+
+                                
+                                *repos.lock().unwrap() = filtered_repos.clone();
 
                                 // Store in IndexedDB asynchronously (WASM only)
-                                #[cfg(target_arch = "wasm32")]
                                 {
+                                    let filtered_repos_for_async = filtered_repos.clone();
                                     spawn_local(async move {
-                                        if let Err(e) = Self::store_repos_in_indexeddb(&filtered_repos).await {
+                                        if let Err(e) = Self::store_repos_in_indexeddb(&filtered_repos_for_async).await {
                                             *error.lock().unwrap() = Some(format!("Failed to store in IndexedDB: {}", e));
                                         }
                                     });
@@ -288,8 +260,7 @@ impl GithubDb {
         });
     }
 
-    // WASM: IndexedDB helpers
-    #[cfg(target_arch = "wasm32")]
+    // IndexedDB helpers
     async fn read_from_indexeddb() -> Result<Vec<Repository>, String> {
         let factory = Factory::new().map_err(|e| format!("Failed to create IndexedDB factory: {:?}", e))?;
         let db = factory
@@ -319,7 +290,6 @@ impl GithubDb {
         }
     }
 
-    #[cfg(target_arch = "wasm32")]
     async fn store_repos_in_indexeddb(repos: &Vec<Repository>) -> Result<(), String> {
         let factory = Factory::new().map_err(|e| format!("Failed to create IndexedDB factory: {:?}", e))?;
         let mut open_request = factory
@@ -351,17 +321,6 @@ impl GithubDb {
             )
             .map_err(|e| format!("Failed to store data: {:?}", e))?;
         tx.await.map_err(|e| format!("Failed to complete transaction: {:?}", e))?;
-        Ok(())
-    }
-
-    // Native: Stub implementations for IndexedDB helpers
-    #[cfg(not(target_arch = "wasm32"))]
-    async fn read_from_indexeddb() -> Result<Vec<Repository>, String> {
-        Ok(vec![])
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    async fn store_in_indexeddb(_response: &ehttp::Response) -> Result<(), String> {
         Ok(())
     }
 }
