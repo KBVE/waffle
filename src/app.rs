@@ -1,4 +1,6 @@
 use crate::db::github::{GithubDb, Repository};
+use egui_extras::image::RetainedImage;
+use egui::TextureHandle;
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -10,6 +12,10 @@ pub struct TemplateApp {
     db: GithubDb,
     #[serde(skip)]
     value: f32,
+    #[serde(skip)]
+    logo_texture: Option<egui::TextureHandle>,
+    #[serde(skip)]
+    logo_loaded: bool,
 }
 
 impl Default for TemplateApp {
@@ -19,6 +25,8 @@ impl Default for TemplateApp {
             label: "Hello World!".to_owned(),
             value: 2.7,
             db: GithubDb::new(),
+            logo_texture: None,
+            logo_loaded: false,
         }
     }
 }
@@ -26,6 +34,7 @@ impl Default for TemplateApp {
 impl TemplateApp {
     /// Called once before the first frame.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        egui_extras::install_image_loaders(&cc.egui_ctx);
         let app: TemplateApp = if let Some(storage) = cc.storage {
             return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
         } else {
@@ -82,6 +91,12 @@ impl eframe::App for TemplateApp {
             ui.label(format!("Results: {}", filtered.len()));
         });
         egui::CentralPanel::default().show(ctx, |ui| {
+            // --- Logo image loading and display using egui_extras loader system ---
+            let logo_url = "https://kbve.com/assets/images/brand/letter_logo.png";
+            let image_response = ui.add(egui::Image::new(logo_url).fit_to_exact_size(egui::Vec2::new(150.0, 50.0)));
+            if image_response.clicked() {
+                ui.ctx().open_url(egui::OpenUrl::new_tab("https://kbve.com/application/rust/"));
+            }
             ui.heading("Filtered Repositories");
             let filtered = self.filter_repos(&self.label);
             for repo in &filtered {
