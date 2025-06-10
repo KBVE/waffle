@@ -1,4 +1,6 @@
 use ehttp::{self};
+#[cfg(target_arch = "wasm32")]
+use ehttp::{Mode};
 use idb::{ObjectStoreParams, Factory, DatabaseEvent};
 use wasm_bindgen_futures::spawn_local;
 use wasm_bindgen::JsValue;
@@ -144,6 +146,8 @@ impl GithubDb {
             url: String::from("https://api.github.com/search/repositories?q=language:rust&sort=stars&order=desc&per_page=100"),
             body: vec![],
             headers: ehttp::Headers::new(&[("User-Agent", "rust-egui-ehttp-app")]),
+            #[cfg(target_arch = "wasm32")]
+            mode:  Mode::Cors,
         };
         
         ehttp::fetch(request, move |result: ehttp::Result<ehttp::Response>| {
@@ -216,6 +220,8 @@ impl GithubDb {
                     url: String::from("https://api.github.com/search/repositories?q=language:rust&sort=stars&order=desc&per_page=100"),
                     body: vec![],
                     headers: ehttp::Headers::new(&[("User-Agent", "rust-egui-ehttp-app")]),
+                    #[cfg(target_arch = "wasm32")]
+                    mode:  Mode::Cors,
                 }
         };
 
