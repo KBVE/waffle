@@ -1,10 +1,10 @@
 [package]
-name = "eframe_template"
+name = "waffle_search"
 version = "0.1.0"
-authors = ["Emil Ernerfeldt <emil.ernerfeldt@gmail.com>"]
-edition = "2021"
+authors = ["Emil Ernerfeldt <emil.ernerfeldt@gmail.com>, h0lybyte"]
+edition = "2024"
 include = ["LICENSE-APACHE", "LICENSE-MIT", "**/*.rs", "Cargo.toml"]
-rust-version = "1.81"
+rust-version = "1.86"
 
 [package.metadata.docs.rs]
 all-features = true
@@ -21,10 +21,11 @@ eframe = { version = "0.31", default-features = false, features = [
     "x11",           # To support older Linux distributions (restores one of the default features)
 ] }
 log = "0.4.27"
-
-# You only need serde if you want app persistence:
 serde = { version = "1.0.219", features = ["derive"] }
-
+serde_json = "1.0"
+ehttp = { version = "0.5.0", features = ["json"] }
+idb = "0.6.4"
+serde-wasm-bindgen = "0.6.5"
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 env_logger = "0.11.8"
