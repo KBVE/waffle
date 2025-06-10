@@ -26,7 +26,7 @@ impl Default for TemplateApp {
 impl TemplateApp {
     /// Called once before the first frame.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let mut app: TemplateApp = if let Some(storage) = cc.storage {
+        let app: TemplateApp = if let Some(storage) = cc.storage {
             return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
         } else {
             Default::default()
