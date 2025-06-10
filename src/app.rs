@@ -55,59 +55,48 @@ impl eframe::App for TemplateApp {
 
     /// Called each time the UI needs repainting, which may be many times per second.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Use a field for search instead of static mut
-        if !self.label.is_empty() && self.label != "Hello World!" {
+        // Define available languages here for easy extensibility
+        // To add a new language, just add it to this array
+        const LANGUAGE_OPTIONS: &[&str] = &["Rust", "Python", "Javascript"];
+        egui::SidePanel::left("side_panel").show(ctx, |ui| {
+            ui.heading("Repository Sync & Search");
+            ui.label("Select Language:");
+            for &lang in LANGUAGE_OPTIONS.iter() {
+                let selected = self.db.get_language() == lang;
+                if ui.radio(selected, lang).clicked() {
+                    self.db.set_language(lang);
+                }
+            }
+            ui.separator();
+            if ui.button("Sync").clicked() {
+                self.db.sync_and_store();
+            }
+            if ui.button("Clear Cache").clicked() {
+                self.db.clear_indexeddb();
+            }
+            ui.separator();
+            ui.label("Search:");
+            ui.text_edit_singleline(&mut self.label);
             let filtered = self.filter_repos(&self.label);
-            egui::SidePanel::left("side_panel").show(ctx, |ui| {
-                ui.heading("Repository Sync & Search");
-                if ui.button("Sync").clicked() {
-                    #[cfg(target_arch = "wasm32")]
-                    self.db.sync_and_store();
-                    #[cfg(not(target_arch = "wasm32"))]
-                    self.db.fetch_repositories();
+            ui.separator();
+            ui.label(format!("Results: {}", filtered.len()));
+        });
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.heading("Filtered Repositories");
+            let filtered = self.filter_repos(&self.label);
+            for repo in &filtered {
+                let name = repo.full_name.as_deref().unwrap_or("<unknown>");
+                let desc = repo.description.as_deref().unwrap_or("");
+                let stars = repo.stargazers_count.unwrap_or(0);
+                ui.horizontal(|ui| {
+                    ui.label(format!("⭐ {}", stars));
+                    ui.hyperlink_to(name, repo.html_url.as_deref().unwrap_or("#"));
+                });
+                if !desc.is_empty() {
+                    ui.label(desc);
                 }
                 ui.separator();
-                ui.label("Search:");
-                ui.text_edit_singleline(&mut self.label);
-                ui.separator();
-                ui.label(format!("Results: {}", filtered.len()));
-            });
-
-            egui::CentralPanel::default().show(ctx, |ui| {
-                ui.heading("Filtered Repositories");
-                for repo in &filtered {
-                    let name = repo.full_name.as_deref().unwrap_or("<unknown>");
-                    let desc = repo.description.as_deref().unwrap_or("");
-                    let stars = repo.stargazers_count.unwrap_or(0);
-                    ui.horizontal(|ui| {
-                        ui.label(format!("⭐ {}", stars));
-                        ui.hyperlink_to(name, repo.html_url.as_deref().unwrap_or("#"));
-                    });
-                    if !desc.is_empty() {
-                        ui.label(desc);
-                    }
-                    ui.separator();
-                }
-            });
-        } else {
-            egui::SidePanel::left("side_panel").show(ctx, |ui| {
-                ui.heading("Repository Sync & Search");
-                if ui.button("Sync").clicked() {
-                    #[cfg(target_arch = "wasm32")]
-                    self.db.sync_and_store();
-                    #[cfg(not(target_arch = "wasm32"))]
-                    self.db.fetch_repositories();
-                }
-                ui.separator();
-                ui.label("Search:");
-                ui.text_edit_singleline(&mut self.label);
-                ui.separator();
-                ui.label("Results: 0");
-            });
-            egui::CentralPanel::default().show(ctx, |ui| {
-                ui.heading("Filtered Repositories");
-                ui.label("No results. Enter a search term.");
-            });
-        }
+            }
+        });
     }
 }

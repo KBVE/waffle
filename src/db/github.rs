@@ -113,6 +113,7 @@ pub struct GithubDb {
     repos: Arc<Mutex<Vec<Repository>>>,
     error: Arc<Mutex<Option<String>>>,
     is_loading: Arc<Mutex<bool>>,
+    pub language: Arc<Mutex<String>>, // Add language selection
 }
 
 impl GithubDb {
@@ -121,35 +122,44 @@ impl GithubDb {
             repos: Arc::new(Mutex::new(Vec::new())),
             error: Arc::new(Mutex::new(None)),
             is_loading: Arc::new(Mutex::new(false)),
+            language: Arc::new(Mutex::new("Rust".to_string())),
         }
     }
 
-    pub fn get_repos(&self) -> Arc<Mutex<Vec<Repository>>> {
-        Arc::clone(&self.repos)
+    pub fn set_language(&self, lang: &str) {
+        *self.language.lock().unwrap() = lang.to_string();
     }
 
-    pub fn get_error(&self) -> Arc<Mutex<Option<String>>> {
-        Arc::clone(&self.error)
+    pub fn get_language(&self) -> String {
+        self.language.lock().unwrap().clone()
     }
 
-    pub fn get_is_loading(&self) -> Arc<Mutex<bool>> {
-        Arc::clone(&self.is_loading)
+    pub fn clear_indexeddb(&self) {
+        let language = self.get_language();
+        let key = format!("latest_{}", language.to_lowercase());
+        let error = Arc::clone(&self.error);
+        wasm_bindgen_futures::spawn_local(async move {
+            if let Err(e) = Self::delete_from_indexeddb(&key).await {
+                *error.lock().unwrap() = Some(format!("Failed to clear IndexedDB: {}", e));
+            }
+        });
     }
 
     pub fn sync_and_store(&self) {
         let repos = Arc::clone(&self.repos);
         let error = Arc::clone(&self.error);
         let is_loading = Arc::clone(&self.is_loading);
+        let language = self.get_language();
+        let key = format!("latest_{}", language.to_lowercase());
         *is_loading.lock().unwrap() = true;
         let request = ehttp::Request {
             method: String::from("GET"),
-            url: String::from("https://api.github.com/search/repositories?q=language:rust&sort=stars&order=desc&per_page=100"),
+            url: format!("https://api.github.com/search/repositories?q=language:{}&sort=stars&order=desc&per_page=100", language),
             body: vec![],
             headers: ehttp::Headers::new(&[("User-Agent", "rust-egui-ehttp-app")]),
             #[cfg(target_arch = "wasm32")]
             mode:  Mode::Cors,
         };
-        
         ehttp::fetch(request, move |result: ehttp::Result<ehttp::Response>| {
             *is_loading.lock().unwrap() = false;
             match result {
@@ -157,8 +167,6 @@ impl GithubDb {
                     if response.ok {
                         match response.json::<SearchResponse>() {
                             Ok(search_response) => {
-
-                                // Fix use-after-move error: clone filtered_repos for both uses
                                 let filtered_repos = search_response
                                     .items
                                     .into_iter()
@@ -166,9 +174,10 @@ impl GithubDb {
                                     .collect::<Vec<_>>();
                                 let filtered_repos_for_mutex = filtered_repos.clone();
                                 let filtered_repos_for_async = filtered_repos_for_mutex.clone();
+                                let key = key.clone();
                                 *repos.lock().unwrap() = filtered_repos_for_mutex;
-                                spawn_local(async move {
-                                    if let Err(e) = Self::store_repos_in_indexeddb(&filtered_repos_for_async).await {
+                                wasm_bindgen_futures::spawn_local(async move {
+                                    if let Err(e) = Self::store_repos_in_indexeddb(&key, &filtered_repos_for_async).await {
                                         *error.lock().unwrap() = Some(format!("Failed to store in IndexedDB: {}", e));
                                     }
                                 });
@@ -192,8 +201,10 @@ impl GithubDb {
     pub fn load_from_indexeddb(&self) {
         let repos = Arc::clone(&self.repos);
         let error = Arc::clone(&self.error);
-        spawn_local(async move {
-            match Self::read_from_indexeddb().await {
+        let language = self.get_language();
+        let key = format!("latest_{}", language.to_lowercase());
+        wasm_bindgen_futures::spawn_local(async move {
+            match Self::read_from_indexeddb(&key).await {
                 Ok(cached_repos) => {
                     *repos.lock().unwrap() = cached_repos;
                 }
@@ -244,8 +255,9 @@ impl GithubDb {
                                 // Store in IndexedDB asynchronously (WASM only)
                                 {
                                     let filtered_repos_for_async = filtered_repos.clone();
+                                    let key = "latest_rust".to_string();
                                     spawn_local(async move {
-                                        if let Err(e) = Self::store_repos_in_indexeddb(&filtered_repos_for_async).await {
+                                        if let Err(e) = Self::store_repos_in_indexeddb(&key, &filtered_repos_for_async).await {
                                             *error.lock().unwrap() = Some(format!("Failed to store in IndexedDB: {}", e));
                                         }
                                     });
@@ -267,7 +279,7 @@ impl GithubDb {
     }
 
     // IndexedDB helpers
-    async fn read_from_indexeddb() -> Result<Vec<Repository>, String> {
+    async fn read_from_indexeddb(key: &str) -> Result<Vec<Repository>, String> {
         let factory = Factory::new().map_err(|e| format!("Failed to create IndexedDB factory: {:?}", e))?;
         let db = factory
             .open("RustProjectsDB", None)
@@ -281,7 +293,7 @@ impl GithubDb {
             .object_store("repositories")
             .map_err(|e| format!("Failed to access object store: {:?}", e))?;
         let value = store
-            .get(JsValue::from_str("latest"))
+            .get(JsValue::from_str(key))
             .map_err(|e| format!("Failed to get data: {:?}", e))?
             .await
             .map_err(|e| format!("Failed to get data: {:?}", e))?;
@@ -296,7 +308,7 @@ impl GithubDb {
         }
     }
 
-    async fn store_repos_in_indexeddb(repos: &Vec<Repository>) -> Result<(), String> {
+    async fn store_repos_in_indexeddb(key: &str, repos: &Vec<Repository>) -> Result<(), String> {
         let factory = Factory::new().map_err(|e| format!("Failed to create IndexedDB factory: {:?}", e))?;
         let mut open_request = factory
             .open("RustProjectsDB", Some(1))
@@ -323,10 +335,36 @@ impl GithubDb {
                     incomplete_results: Some(false),
                     items: repos.clone(),
                 }).map_err(|e| format!("Failed to convert to JsValue: {:?}", e))?,
-                Some(&JsValue::from_str("latest")),
+                Some(&JsValue::from_str(key)),
             )
             .map_err(|e| format!("Failed to store data: {:?}", e))?;
         tx.await.map_err(|e| format!("Failed to complete transaction: {:?}", e))?;
         Ok(())
+    }
+
+    async fn delete_from_indexeddb(key: &str) -> Result<(), String> {
+        let factory = Factory::new().map_err(|e| format!("Failed to create IndexedDB factory: {:?}", e))?;
+        let db = factory
+            .open("RustProjectsDB", None)
+            .map_err(|e| format!("Failed to open database: {:?}", e))?
+            .await
+            .map_err(|e| format!("Failed to open database: {:?}", e))?;
+        let tx = db
+            .transaction(&["repositories"], idb::TransactionMode::ReadWrite)
+            .map_err(|e| format!("Failed to create transaction: {:?}", e))?;
+        let store = tx
+            .object_store("repositories")
+            .map_err(|e| format!("Failed to access object store: {:?}", e))?;
+        store
+            .delete(JsValue::from_str(key))
+            .map_err(|e| format!("Failed to delete data: {:?}", e))?
+            .await
+            .map_err(|e| format!("Failed to delete data: {:?}", e))?;
+        tx.await.map_err(|e| format!("Failed to complete transaction: {:?}", e))?;
+        Ok(())
+    }
+
+    pub fn get_repos(&self) -> Arc<Mutex<Vec<Repository>>> {
+        Arc::clone(&self.repos)
     }
 }
