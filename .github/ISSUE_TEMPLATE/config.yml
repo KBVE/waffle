@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Main KBVE Issue Tracker
+    url: https://github.com/KBVE/kbve/issues/new/choose
+    about: Please report all issues and feature requests in the main KBVE repository.
