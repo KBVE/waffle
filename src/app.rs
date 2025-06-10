@@ -1,6 +1,4 @@
 use crate::db::github::{GithubDb, Repository};
-use egui_extras::image::RetainedImage;
-use egui::TextureHandle;
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
