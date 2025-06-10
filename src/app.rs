@@ -1,11 +1,14 @@
+use crate::db::github::{GithubDb, Repository};
+
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
 pub struct TemplateApp {
     // Example stuff:
     label: String,
-
-    #[serde(skip)] // This how you opt-out of serialization of a field
+    #[serde(skip)]
+    db: GithubDb,
+    #[serde(skip)]
     value: f32,
 }
 
@@ -15,6 +18,7 @@ impl Default for TemplateApp {
             // Example stuff:
             label: "Hello World!".to_owned(),
             value: 2.7,
+            db: GithubDb::new(),
         }
     }
 }
@@ -22,16 +26,24 @@ impl Default for TemplateApp {
 impl TemplateApp {
     /// Called once before the first frame.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        // This is also where you can customize the look and feel of egui using
-        // `cc.egui_ctx.set_visuals` and `cc.egui_ctx.set_fonts`.
-
-        // Load previous app state (if any).
-        // Note that you must enable the `persistence` feature for this to work.
-        if let Some(storage) = cc.storage {
+        let app: TemplateApp = if let Some(storage) = cc.storage {
             return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
-        }
+        } else {
+            Default::default()
+        };
+        app
+    }
 
-        Default::default()
+    fn filter_repos<'a>(&self, query: &str) -> Vec<Repository> {
+        let repos = self.db.get_repos();
+        let repos = repos.lock().unwrap();
+        repos.iter()
+            .filter(|repo| {
+                repo.full_name.as_ref().map_or(false, |name| name.to_lowercase().contains(&query.to_lowercase())) ||
+                repo.description.as_ref().map_or(false, |desc| desc.to_lowercase().contains(&query.to_lowercase()))
+            })
+            .cloned()
+            .collect()
     }
 }
 
@@ -43,67 +55,59 @@ impl eframe::App for TemplateApp {
 
     /// Called each time the UI needs repainting, which may be many times per second.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
-        // For inspiration and more examples, go to https://emilk.github.io/egui
-
-        egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
-            // The top panel is often a good place for a menu bar:
-
-            egui::menu::bar(ui, |ui| {
-                // NOTE: no File->Quit on web pages!
-                let is_web = cfg!(target_arch = "wasm32");
-                if !is_web {
-                    ui.menu_button("File", |ui| {
-                        if ui.button("Quit").clicked() {
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                        }
-                    });
-                    ui.add_space(16.0);
+        // Use a field for search instead of static mut
+        if !self.label.is_empty() && self.label != "Hello World!" {
+            let filtered = self.filter_repos(&self.label);
+            egui::SidePanel::left("side_panel").show(ctx, |ui| {
+                ui.heading("Repository Sync & Search");
+                if ui.button("Sync").clicked() {
+                    #[cfg(target_arch = "wasm32")]
+                    self.db.sync_and_store();
+                    #[cfg(not(target_arch = "wasm32"))]
+                    self.db.fetch_repositories();
                 }
-
-                egui::widgets::global_theme_preference_buttons(ui);
-            });
-        });
-
-        egui::CentralPanel::default().show(ctx, |ui| {
-            // The central panel the region left after adding TopPanel's and SidePanel's
-            ui.heading("eframe template");
-
-            ui.horizontal(|ui| {
-                ui.label("Write something: ");
+                ui.separator();
+                ui.label("Search:");
                 ui.text_edit_singleline(&mut self.label);
+                ui.separator();
+                ui.label(format!("Results: {}", filtered.len()));
             });
 
-            ui.add(egui::Slider::new(&mut self.value, 0.0..=10.0).text("value"));
-            if ui.button("Increment").clicked() {
-                self.value += 1.0;
-            }
-
-            ui.separator();
-
-            ui.add(egui::github_link_file!(
-                "https://github.com/emilk/eframe_template/blob/main/",
-                "Source code."
-            ));
-
-            ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                powered_by_egui_and_eframe(ui);
-                egui::warn_if_debug_build(ui);
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.heading("Filtered Repositories");
+                for repo in &filtered {
+                    let name = repo.full_name.as_deref().unwrap_or("<unknown>");
+                    let desc = repo.description.as_deref().unwrap_or("");
+                    let stars = repo.stargazers_count.unwrap_or(0);
+                    ui.horizontal(|ui| {
+                        ui.label(format!("⭐ {}", stars));
+                        ui.hyperlink_to(name, repo.html_url.as_deref().unwrap_or("#"));
+                    });
+                    if !desc.is_empty() {
+                        ui.label(desc);
+                    }
+                    ui.separator();
+                }
             });
-        });
+        } else {
+            egui::SidePanel::left("side_panel").show(ctx, |ui| {
+                ui.heading("Repository Sync & Search");
+                if ui.button("Sync").clicked() {
+                    #[cfg(target_arch = "wasm32")]
+                    self.db.sync_and_store();
+                    #[cfg(not(target_arch = "wasm32"))]
+                    self.db.fetch_repositories();
+                }
+                ui.separator();
+                ui.label("Search:");
+                ui.text_edit_singleline(&mut self.label);
+                ui.separator();
+                ui.label("Results: 0");
+            });
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.heading("Filtered Repositories");
+                ui.label("No results. Enter a search term.");
+            });
+        }
     }
-}
-
-fn powered_by_egui_and_eframe(ui: &mut egui::Ui) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
-        ui.label("Powered by ");
-        ui.hyperlink_to("egui", "https://github.com/emilk/egui");
-        ui.label(" and ");
-        ui.hyperlink_to(
-            "eframe",
-            "https://github.com/emilk/egui/tree/master/crates/eframe",
-        );
-        ui.label(".");
-    });
 }
