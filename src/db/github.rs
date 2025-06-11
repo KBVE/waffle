@@ -367,4 +367,8 @@ impl GithubDb {
     pub fn get_repos(&self) -> Arc<Mutex<Vec<Repository>>> {
         Arc::clone(&self.repos)
     }
+
+    pub fn is_loading(&self) -> bool {
+        *self.is_loading.lock().unwrap()
+    }
 }
