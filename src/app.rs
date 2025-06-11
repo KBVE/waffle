@@ -94,7 +94,22 @@ impl TemplateApp {
         };
         app.app_state = AppState::Init;
         app.db.load_from_indexeddb();
+        app.load_filtered_repos_from_idb(&cc.egui_ctx);
         app
+    }
+
+    /// Load all repos for the current language from IndexedDB and set filtered_repos
+    pub fn load_filtered_repos_from_idb(&mut self, ctx: &egui::Context) {
+        let language = self.db.get_language();
+        let ctx = ctx.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let result = match crate::db::idb::open_waffle_db().await {
+                Ok(db_conn) => crate::db::idb::filter_repos_in_idb::<Repository>(&db_conn, &language, "").await.unwrap_or_default(),
+                Err(_) => vec![],
+            };
+            ctx.data_mut(|d| d.insert_temp(Id::new("waffle_filtered_repos"), result));
+            ctx.request_repaint();
+        });
     }
 
     async fn check_empty_and_update_state_async(&mut self) {
@@ -173,9 +188,18 @@ impl TemplateApp {
                     },
                     LoadingKind::Sync => {
                         let db = self.db.clone();
+                        let ctx = ctx.clone();
                         wasm_bindgen_futures::spawn_local(async move {
                             db.sync_and_store();
                             db.load_from_indexeddb();
+                            // After sync, reload filtered repos
+                            let language = db.get_language();
+                            let result = match crate::db::idb::open_waffle_db().await {
+                                Ok(db_conn) => crate::db::idb::filter_repos_in_idb::<Repository>(&db_conn, &language, "").await.unwrap_or_default(),
+                                Err(_) => vec![],
+                            };
+                            ctx.data_mut(|d| d.insert_temp(Id::new("waffle_filtered_repos"), result));
+                            ctx.request_repaint();
                         });
                     },
                     LoadingKind::ClearCache => {
@@ -312,6 +336,18 @@ impl TemplateApp {
                 }
             }
         });
+
+        // Update filtered_repos from egui context temp data if available
+        if let Some(repos) = ctx.data(|d| d.get_temp::<Vec<Repository>>(Id::new("waffle_filtered_repos"))) {
+            let is_empty = repos.is_empty();
+            self.filtered_repos = Some(repos.clone());
+            // Set app_state based on whether there is data
+            if is_empty {
+                self.app_state = AppState::Empty;
+            } else {
+                self.app_state = AppState::Normal;
+            }
+        }
 
         // Show welcome dialog if DB is empty
         if self.app_state == AppState::Empty {
