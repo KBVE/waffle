@@ -17,6 +17,11 @@ pub fn get_captcha_token() -> Option<String> {
     LAST_TOKEN.with(|t| t.borrow().clone())
 }
 
+/// Returns and clears the captcha token (consume-on-use)
+pub fn take_captcha_token() -> Option<String> {
+    LAST_TOKEN.with(|t| t.borrow_mut().take())
+}
+
 pub fn clear_captcha_token() {
     LAST_TOKEN.with(|t| t.replace(None));
 }

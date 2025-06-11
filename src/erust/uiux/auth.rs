@@ -41,23 +41,27 @@ impl AuthWidget {
 
     fn show_login(&mut self, _ctx: &Context, ui: &mut Ui) {
         ui.heading("Login");
+        ui.separator();
         ui.label("Email:");
         ui.text_edit_singleline(&mut self.email);
         ui.label("Password:");
         ui.add(egui::TextEdit::singleline(&mut self.password).password(true));
+        ui.separator();
+
         if ui.button("Solve Captcha").clicked() {
             hcaptcha::open_captcha();
         }
-        if let Some(token) = hcaptcha::get_captcha_token() {
-            self.captcha_token = Some(token);
-            ui.label("Captcha solved!");
+        // Always show the captcha status message
+        if hcaptcha::get_captcha_token().is_some() {
+            ui.colored_label(egui::Color32::GREEN, "Captcha Solved: Token Set");
         } else {
             ui.label("Captcha required");
         }
         if ui.button("Login").clicked() {
-            if self.email.is_empty() || self.password.is_empty() || self.captcha_token.is_none() {
+            if self.email.is_empty() || self.password.is_empty() || hcaptcha::get_captcha_token().is_none() {
                 self.error = Some("All fields and captcha are required".to_string());
             } else {
+                let _token = hcaptcha::take_captcha_token();
                 self.error = Some("(Stub) Would call Supabase login here".to_string());
             }
         }
@@ -87,18 +91,19 @@ impl AuthWidget {
         if ui.button("Solve Captcha").clicked() {
             hcaptcha::open_captcha();
         }
-        if let Some(token) = hcaptcha::get_captcha_token() {
-            self.captcha_token = Some(token);
-            ui.label("Captcha solved!");
+        // Always show the captcha status message
+        if hcaptcha::get_captcha_token().is_some() {
+            ui.colored_label(egui::Color32::GREEN, "Captcha Solved: Token Set");
         } else {
             ui.label("Captcha required");
         }
         if ui.button("Register").clicked() {
-            if self.email.is_empty() || self.password.is_empty() || self.confirm_password.is_empty() || self.captcha_token.is_none() {
+            if self.email.is_empty() || self.password.is_empty() || self.confirm_password.is_empty() || hcaptcha::get_captcha_token().is_none() {
                 self.error = Some("All fields and captcha are required".to_string());
             } else if self.password != self.confirm_password {
                 self.error = Some("Passwords do not match".to_string());
             } else {
+                let _token = hcaptcha::take_captcha_token();
                 self.error = Some("(Stub) Would call Supabase register here".to_string());
             }
         }
