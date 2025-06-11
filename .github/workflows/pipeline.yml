@@ -5,6 +5,10 @@ on:
     branches:
       - 'dev*'
 
+concurrency:
+  group: pr-auto-${{ github.head_ref }}
+  cancel-in-progress: true
+
 jobs:
   auto-pr-to-main:
     runs-on: ubuntu-latest
