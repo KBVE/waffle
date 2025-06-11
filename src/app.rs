@@ -34,20 +34,25 @@ impl TemplateApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         egui_extras::install_image_loaders(&cc.egui_ctx);
         let app: TemplateApp = if let Some(storage) = cc.storage {
-            return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
+            eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default()
         } else {
             Default::default()
         };
+        // Attempt to load from IndexedDB on startup
+        app.db.load_from_indexeddb();
         app
     }
 
     fn filter_repos<'a>(&self, query: &str) -> Vec<Repository> {
         let repos = self.db.get_repos();
         let repos = repos.lock().unwrap();
+        let selected_language = self.db.get_language();
         repos.iter()
             .filter(|repo| {
-                repo.full_name.as_ref().map_or(false, |name| name.to_lowercase().contains(&query.to_lowercase())) ||
-                repo.description.as_ref().map_or(false, |desc| desc.to_lowercase().contains(&query.to_lowercase()))
+                let matches_language = repo.language.as_ref().map_or(false, |lang| lang.eq_ignore_ascii_case(selected_language.as_str()));
+                let matches_query = repo.full_name.as_ref().map_or(false, |name| name.to_lowercase().contains(&query.to_lowercase())) ||
+                    repo.description.as_ref().map_or(false, |desc| desc.to_lowercase().contains(&query.to_lowercase()));
+                matches_language && matches_query
             })
             .cloned()
             .collect()
@@ -104,18 +109,23 @@ impl eframe::App for TemplateApp {
             ui.separator();
             ui.heading("Filtered Repositories");
             let filtered = self.filter_repos(&self.label);
-            for repo in &filtered {
-                let name = repo.full_name.as_deref().unwrap_or("<unknown>");
-                let desc = repo.description.as_deref().unwrap_or("");
-                let stars = repo.stargazers_count.unwrap_or(0);
-                ui.horizontal(|ui| {
-                    ui.label(format!("⭐ {}", stars));
-                    ui.hyperlink_to(name, repo.html_url.as_deref().unwrap_or("#"));
-                });
-                if !desc.is_empty() {
-                    ui.label(desc);
+            let current_language = self.db.get_language();
+            if filtered.is_empty() {
+                ui.label(format!("There is no data for {}, please sync.", current_language));
+            } else {
+                for repo in &filtered {
+                    let name = repo.full_name.as_deref().unwrap_or("<unknown>");
+                    let desc = repo.description.as_deref().unwrap_or("");
+                    let stars = repo.stargazers_count.unwrap_or(0);
+                    ui.horizontal(|ui| {
+                        ui.label(format!("⭐ {}", stars));
+                        ui.hyperlink_to(name, repo.html_url.as_deref().unwrap_or("#"));
+                    });
+                    if !desc.is_empty() {
+                        ui.label(desc);
+                    }
+                    ui.separator();
                 }
-                ui.separator();
             }
         });
     }
