@@ -66,7 +66,7 @@ pub async fn get_all_repos<T: DeserializeOwned>(db: &Database, language: &str) -
     Ok(results)
 }
 
-pub async fn filter_repos_in_idb<T: DeserializeOwned + Clone>(db: &Database, language: &str, query: &str) -> Result<Vec<T>, Error> {
+pub async fn filter_repos_in_idb<T: DeserializeOwned + Serialize + Clone>(db: &Database, language: &str, query: &str) -> Result<Vec<T>, Error> {
     let tx = db.transaction(&[language], TransactionMode::ReadOnly)?;
     let store = tx.object_store(language).unwrap();
     let mut results = Vec::new();
@@ -74,14 +74,11 @@ pub async fn filter_repos_in_idb<T: DeserializeOwned + Clone>(db: &Database, lan
     let mut cursor = cursor.await?;
     while let Some(cur) = cursor {
         let value: T = serde_wasm_bindgen::from_value(cur.value()?.clone()).unwrap();
-        // Filtering logic: assumes T is crate::db::github::Repository
-        let repo = unsafe { &*(std::ptr::addr_of!(value) as *const crate::db::github::Repository) };
-        let repo_lang = repo.language.as_deref().unwrap_or("");
-        let repo_name = repo.full_name.as_deref().unwrap_or("");
-        let repo_desc = repo.description.as_deref().unwrap_or("");
-        let matches_language = repo_lang.eq_ignore_ascii_case(language);
+        let json = serde_json::to_value(&value).unwrap();
+        let repo_name = json.get("full_name").and_then(|v| v.as_str()).unwrap_or("");
+        let repo_desc = json.get("description").and_then(|v| v.as_str()).unwrap_or("");
         let matches_query = repo_name.to_lowercase().contains(&query.to_lowercase()) || repo_desc.to_lowercase().contains(&query.to_lowercase());
-        if matches_language && matches_query {
+        if matches_query {
             results.push(value.clone());
         }
         cursor = cur.next(None)?.await?;
