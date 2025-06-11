@@ -1,6 +1,7 @@
 // erust/uiux/auth.rs
 use egui::{Context, Ui};
 use crate::erust::uiux::hcaptcha;
+use crate::erust::uiux::javascript_interop;
 
 pub enum AuthView {
     Login,
@@ -64,7 +65,8 @@ impl AuthWidget {
                 self.error = Some("All fields and captcha are required".to_string());
             } else {
                 let _token = hcaptcha::take_captcha_token();
-                self.error = Some("(Stub) Would call Supabase login here".to_string());
+                // self.error = Some("(Stub) Would call Supabase login here".to_string());
+                login_with_js(self.email.as_str(), self.password.as_str(), _token.as_deref().unwrap_or(""));
             }
         }
         if let Some(err) = &self.error {
@@ -111,25 +113,12 @@ impl AuthWidget {
                 if let Some(token) = token {
                     let email = self.email.clone();
                     let password = self.password.clone();
-                    let error_ptr = std::rc::Rc::new(std::cell::RefCell::new(None));
-                    let error_ptr_clone = error_ptr.clone();
-                    let ctx = ui.ctx().clone();
-                    // Show spinner while processing
                     self.error = Some("Processing registration...".to_string());
-                    wasm_bindgen_futures::spawn_local(async move {
-                        let resp = crate::erust::uiux::supabase::register(&email, &password, &token).await;
-                        let resp_json: serde_json::Value = serde_json::from_str(&resp).unwrap_or_default();
-                        let success = resp_json.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
-                        let error = resp_json.get("error").and_then(|v| v.as_str()).map(|s| s.to_string());
-                        ctx.request_repaint();
-                        let mut err_mut = error_ptr_clone.borrow_mut();
-                        if success {
-                            *err_mut = Some("Registration successful!".to_string());
-                        } else {
-                            *err_mut = Some(error.unwrap_or_else(|| "Registration failed".to_string()));
-                        }
-                    });
-                    self.error = error_ptr.borrow().clone();
+                    crate::erust::uiux::auth::register_with_js(
+                        email.as_str(),
+                        password.as_str(),
+                        token.as_str(),
+                    );
                 } else {
                     self.error = Some("Captcha token missing".to_string());
                 }
@@ -183,6 +172,26 @@ impl AuthWidget {
             }
         });
     }
+}
+
+/// Call this to trigger a register action via JS handler
+pub fn register_with_js(email: &str, password: &str, captcha_token: &str) {
+    javascript_interop::send_action_message(
+        "register",
+        email,
+        password,
+        captcha_token,
+    );
+}
+
+/// Call this to trigger a login action via JS handler
+pub fn login_with_js(email: &str, password: &str, captcha_token: &str) {
+    javascript_interop::send_action_message(
+        "login",
+        email,
+        password,
+        captcha_token,
+    );
 }
 
 // Make AuthWidget public for use in other modules
