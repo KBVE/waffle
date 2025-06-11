@@ -3,15 +3,11 @@ use crate::utility::show_loading_spinner_custom;
 use egui::Id;
 use crate::db::github::{GithubDb, Repository};
 use crate::db::idb::LANGUAGES;
+use crate::erust::uiux::search::SearchWidget;
+use crate::erust::state::{AppState, WaffleState};
+use crate::erust::uiux::auth::AuthWidget;
 
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone, PartialEq, Eq)]
-pub enum AppState {
-    Init,
-    Normal,
-    Empty,
-}
-
-#[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
 pub enum LoadingState {
     Idle,
     Loading {
@@ -58,9 +54,15 @@ pub struct TemplateApp {
     #[serde(skip)]
     pending_app_state: Option<AppState>,
     #[serde(skip)]
+    waffle_state: WaffleState,
+    #[serde(skip)]
     filtered_repos: Option<Vec<Repository>>,
     #[serde(skip)]
     filter_loading: bool,
+    #[serde(skip)]
+    search_widget: Option<SearchWidget>,
+    #[serde(skip)]
+    auth_widget: AuthWidget,
 }
 
 impl Default for TemplateApp {
@@ -77,8 +79,11 @@ impl Default for TemplateApp {
             toast_timer: 0.0,
             app_state: AppState::Init,
             pending_app_state: None,
+            waffle_state: WaffleState::new(),
             filtered_repos: None,
             filter_loading: false,
+            search_widget: Some(SearchWidget::new()),
+            auth_widget: AuthWidget::new(false),
         }
     }
 }
@@ -141,17 +146,10 @@ impl TemplateApp {
     pub fn filter_repos_async(&mut self, query: &str, ctx: &egui::Context) {
         self.filter_loading = true;
         self.filtered_repos = None;
-        let query = query.to_string();
-        let language = self.db.get_language();
-        let ctx = ctx.clone(); // keep this, as it is used in the async block
-        wasm_bindgen_futures::spawn_local(async move {
-            let result = match crate::db::idb::open_waffle_db().await {
-                Ok(db_conn) => crate::db::idb::filter_repos_in_idb::<Repository>(&db_conn, &language, &query).await.unwrap_or_default(),
-                Err(_) => vec![],
-            };
-            ctx.data_mut(|d| d.insert_temp(Id::new("waffle_filtered_repos"), result));
-            ctx.request_repaint();
-        });
+        if let Some(widget) = &mut self.search_widget {
+            widget.query = query.to_string();
+            widget.search(&self.db.get_language(), ctx);
+        }
     }
 
     pub fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -300,6 +298,14 @@ impl TemplateApp {
             let filtered = self.filtered_repos.as_ref().cloned().unwrap_or_default();
             ui.separator();
             ui.label(format!("Results: {}", filtered.len()));
+            // --- Show app state at the bottom ---
+            ui.separator();
+            ui.label(format!("App State: {:?}", self.waffle_state.app_state));
+            if !self.waffle_state.log.is_empty() {
+                ui.separator();
+                ui.label("App Log:");
+                ui.label(&self.waffle_state.log);
+            }
         });
         egui::CentralPanel::default().show(ctx, |ui| {
             // --- Logo image loading and display using egui_extras loader system ---
@@ -337,16 +343,26 @@ impl TemplateApp {
             }
         });
 
+        // --- Authentication Widget (Login/Register) ---
+        egui::Window::new("Authentication")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_TOP, egui::Vec2::new(0.0, 40.0))
+            .show(ctx, |ui| {
+                self.auth_widget.show(ctx, ui);
+            });
+
         // Update filtered_repos from egui context temp data if available
-        if let Some(repos) = ctx.data(|d| d.get_temp::<Vec<Repository>>(Id::new("waffle_filtered_repos"))) {
-            let is_empty = repos.is_empty();
-            self.filtered_repos = Some(repos.clone());
-            // Set app_state based on whether there is data
-            if is_empty {
-                self.app_state = AppState::Empty;
+        if let Some(widget) = &mut self.search_widget {
+            widget.update_results_from_ctx(ctx);
+            // Use WaffleState to manage app state
+            if !widget.results.is_empty() {
+                self.waffle_state.set_ready(widget.results.clone());
             } else {
-                self.app_state = AppState::Normal;
+                self.waffle_state.set_empty();
             }
+            self.filtered_repos = Some(self.waffle_state.filtered_repos.clone());
+            self.app_state = self.waffle_state.app_state.clone();
         }
 
         // Show welcome dialog if DB is empty
