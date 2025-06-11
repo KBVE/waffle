@@ -2,17 +2,27 @@
 use crate::utility::show_loading_spinner_custom;
 use egui::Id;
 use crate::db::github::{GithubDb, Repository};
+use crate::db::idb::LANGUAGES;
+
+#[derive(serde::Deserialize, serde::Serialize, Debug, Clone, PartialEq, Eq)]
+pub enum AppState {
+    Init,
+    Normal,
+    Empty,
+}
 
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
 pub enum LoadingState {
     Idle,
     Loading {
         kind: LoadingKind,
-        timer: f32,
         message: String,
         pending_language: Option<String>,
     },
-    Error,
+    Finishing {
+        message: String,
+    },
+    Error(String),
 }
 
 #[derive(serde::Deserialize, serde::Serialize, PartialEq, Eq, Debug, Clone, Copy)]
@@ -43,6 +53,14 @@ pub struct TemplateApp {
     toast_message: Option<String>,
     #[serde(skip)]
     toast_timer: f32,
+    #[serde(skip)]
+    app_state: AppState,
+    #[serde(skip)]
+    pending_app_state: Option<AppState>,
+    #[serde(skip)]
+    filtered_repos: Option<Vec<Repository>>,
+    #[serde(skip)]
+    filter_loading: bool,
 }
 
 impl Default for TemplateApp {
@@ -57,6 +75,10 @@ impl Default for TemplateApp {
             loading_state: LoadingState::Idle,
             toast_message: None,
             toast_timer: 0.0,
+            app_state: AppState::Init,
+            pending_app_state: None,
+            filtered_repos: None,
+            filter_loading: false,
         }
     }
 }
@@ -65,77 +87,74 @@ impl TemplateApp {
     /// Called once before the first frame.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         egui_extras::install_image_loaders(&cc.egui_ctx);
-        let app: TemplateApp = if let Some(storage) = cc.storage {
+        let mut app: TemplateApp = if let Some(storage) = cc.storage {
             eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default()
         } else {
             Default::default()
         };
-        // Attempt to load from IndexedDB on startup
+        app.app_state = AppState::Init;
         app.db.load_from_indexeddb();
+        app.load_filtered_repos_from_idb(&cc.egui_ctx);
         app
     }
 
-    fn filter_repos<'a>(&self, query: &str) -> Vec<Repository> {
-        let repos = self.db.get_repos();
-        let repos = repos.lock().unwrap();
-        let selected_language = self.db.get_language();
-        repos.iter()
-            .filter(|repo| {
-                let matches_language = repo.language.as_ref().map_or(false, |lang| lang.eq_ignore_ascii_case(selected_language.as_str()));
-                let matches_query = repo.full_name.as_ref().map_or(false, |name| name.to_lowercase().contains(&query.to_lowercase())) ||
-                    repo.description.as_ref().map_or(false, |desc| desc.to_lowercase().contains(&query.to_lowercase()));
-                matches_language && matches_query
-            })
-            .cloned()
-            .collect()
+    /// Load all repos for the current language from IndexedDB and set filtered_repos
+    pub fn load_filtered_repos_from_idb(&mut self, ctx: &egui::Context) {
+        let language = self.db.get_language();
+        let ctx = ctx.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let result = match crate::db::idb::open_waffle_db().await {
+                Ok(db_conn) => crate::db::idb::filter_repos_in_idb::<Repository>(&db_conn, &language, "").await.unwrap_or_default(),
+                Err(_) => vec![],
+            };
+            ctx.data_mut(|d| d.insert_temp(Id::new("waffle_filtered_repos"), result));
+            ctx.request_repaint();
+        });
     }
 
-    fn show_toast(&mut self, _ctx: &egui::Context, ui: &mut egui::Ui) {
-        if let Some(msg) = &self.toast_message {
-            let toast_height = 44.0;
-            let toast_width = 360.0;
-            let rect = egui::Rect::from_min_size(
-                ui.max_rect().center_top() + egui::vec2(-toast_width / 2.0, 0.0),
-                egui::vec2(toast_width, toast_height),
-            );
-            let painter = ui.painter();
-            // Fade out effect based on timer
-            let alpha = (self.toast_timer / 2.5).clamp(0.0, 1.0);
-            // Dark stone 950 background
-            let bg_color = egui::Color32::from_rgba_unmultiplied(18, 24, 27, (240.0 * alpha) as u8);
-            // Bright cyan font
-            let font_color = egui::Color32::from_rgb(0, 255, 255);
-            // Light purple border/accent
-            let accent_color = egui::Color32::from_rgb(180, 140, 255);
-            // Shadow
-            let shadow_rect = rect.expand(10.0);
-            painter.rect_filled(shadow_rect, 18.0, egui::Color32::from_rgba_unmultiplied(80, 0, 120, (40.0 * alpha) as u8));
-            painter.rect_filled(rect, 12.0, bg_color);
-            painter.rect_stroke(rect, 12.0, egui::epaint::Stroke::new(2.0, accent_color), egui::epaint::StrokeKind::Outside);
-            painter.text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                msg,
-                egui::TextStyle::Button.resolve(ui.style()),
-                font_color,
-            );
+    async fn check_empty_and_update_state_async(&mut self) {
+        use crate::db::idb;
+        use crate::db::github::Repository;
+        if let Ok(db) = idb::open_waffle_db().await {
+            let language = self.db.get_language();
+            let key = format!("latest_{}", language.to_lowercase());
+            match idb::get_repo::<Vec<Repository>>(&db, &language, &key).await {
+                Ok(Some(repos)) => {
+                    if repos.is_empty() {
+                        self.pending_app_state = Some(AppState::Empty);
+                    } else {
+                        self.pending_app_state = Some(AppState::Normal);
+                    }
+                },
+                Ok(None) => {
+                    self.pending_app_state = Some(AppState::Empty);
+                },
+                Err(_) => {
+                    self.pending_app_state = Some(AppState::Empty);
+                }
+            }
+        } else {
+            self.pending_app_state = Some(AppState::Empty);
         }
     }
 
-    fn trigger_toast(&mut self, message: &str) {
-        self.toast_message = Some(message.to_owned());
-        self.toast_timer = 2.5; // seconds
+    pub fn filter_repos_async(&mut self, query: &str, ctx: &egui::Context) {
+        self.filter_loading = true;
+        self.filtered_repos = None;
+        let query = query.to_string();
+        let language = self.db.get_language();
+        let ctx = ctx.clone(); // keep this, as it is used in the async block
+        wasm_bindgen_futures::spawn_local(async move {
+            let result = match crate::db::idb::open_waffle_db().await {
+                Ok(db_conn) => crate::db::idb::filter_repos_in_idb::<Repository>(&db_conn, &language, &query).await.unwrap_or_default(),
+                Err(_) => vec![],
+            };
+            ctx.data_mut(|d| d.insert_temp(Id::new("waffle_filtered_repos"), result));
+            ctx.request_repaint();
+        });
     }
-}
 
-impl eframe::App for TemplateApp {
-    /// Called by the frame work to save state before shutdown.
-    fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        eframe::set_value(storage, eframe::APP_KEY, self);
-    }
-
-    /// Called each time the UI needs repainting, which may be many times per second.
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    pub fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Toast timer logic
         if let Some(_) = self.toast_message {
             let dt = ctx.input(|i| i.unstable_dt);
@@ -145,68 +164,115 @@ impl eframe::App for TemplateApp {
             }
         }
         // Loading state machine
+        let mut error_to_trigger: Option<String> = None;
         match &mut self.loading_state {
             LoadingState::Idle => {},
-            LoadingState::Loading { kind, timer, message: _, pending_language } => {
-                let dt = ctx.input(|i| i.unstable_dt);
-                *timer -= dt;
-                if *timer <= 0.0 {
-                    match kind {
-                        LoadingKind::LanguageSwitch => {
-                            if let Some(lang) = pending_language.take() {
-                                self.db.set_language(&lang);
-                                self.db.load_from_indexeddb();
-                                self.trigger_toast(&format!("Switched to {}!", lang));
-                            }
-                        },
-                        LoadingKind::Sync => {
-                            self.db.sync_and_store();
-                            self.trigger_toast("Repositories synced!");
-                        },
-                        LoadingKind::ClearCache => {
-                            self.db.clear_indexeddb();
-                            self.trigger_toast("Cache cleared!");
-                        },
-                    }
-                    self.loading_state = LoadingState::Idle;
+            LoadingState::Loading { kind, message: _, pending_language } => {
+                match kind {
+                    LoadingKind::LanguageSwitch => {
+                        if let Some(lang) = pending_language.take() {
+                            self.db.set_language(&lang);
+                            self.db.load_from_indexeddb();
+                            // Immediately reload filtered repos for the new language
+                            let language = self.db.get_language();
+                            let ctx = ctx.clone();
+                            wasm_bindgen_futures::spawn_local(async move {
+                                let result = match crate::db::idb::open_waffle_db().await {
+                                    Ok(db_conn) => crate::db::idb::filter_repos_in_idb::<Repository>(&db_conn, &language, "").await.unwrap_or_default(),
+                                    Err(_) => vec![],
+                                };
+                                ctx.data_mut(|d| d.insert_temp(Id::new("waffle_filtered_repos"), result));
+                                ctx.request_repaint();
+                            });
+                        }
+                    },
+                    LoadingKind::Sync => {
+                        let db = self.db.clone();
+                        let ctx = ctx.clone();
+                        wasm_bindgen_futures::spawn_local(async move {
+                            db.sync_and_store();
+                            db.load_from_indexeddb();
+                            // After sync, reload filtered repos
+                            let language = db.get_language();
+                            let result = match crate::db::idb::open_waffle_db().await {
+                                Ok(db_conn) => crate::db::idb::filter_repos_in_idb::<Repository>(&db_conn, &language, "").await.unwrap_or_default(),
+                                Err(_) => vec![],
+                            };
+                            ctx.data_mut(|d| d.insert_temp(Id::new("waffle_filtered_repos"), result));
+                            ctx.request_repaint();
+                        });
+                    },
+                    LoadingKind::ClearCache => {
+                        self.db.clear_indexeddb();
+                        self.db.load_from_indexeddb();
+                    },
                 }
+                let message = match kind {
+                    LoadingKind::LanguageSwitch => "Finishing language switch...",
+                    LoadingKind::Sync => "Finishing sync...",
+                    LoadingKind::ClearCache => "Finishing cache clear...",
+                };
+                self.loading_state = LoadingState::Finishing { message: message.to_string() };
             },
-            LoadingState::Error => {
-                // Could show an error toast or overlay here
+            LoadingState::Finishing { .. } => {
+                let app_ptr = self as *mut TemplateApp;
+                wasm_bindgen_futures::spawn_local(async move {
+                    // SAFETY: This is safe because update() is single-threaded in egui/eframe
+                    unsafe {
+                        (*app_ptr).check_empty_and_update_state_async().await;
+                    }
+                });
+                // Show toast only if there is data after sync
+                if self.app_state == AppState::Normal {
+                    self.toast_message = Some("Repositories synced!".to_owned());
+                } else if self.app_state == AppState::Empty {
+                    self.toast_message = Some("No repositories found. Please sync again.".to_owned());
+                }
+                self.loading_state = LoadingState::Idle;
+            },
+            LoadingState::Error(err) => {
+                error_to_trigger = Some(err.clone());
+                self.loading_state = LoadingState::Idle;
             },
         }
-        // Show loading spinner overlay if loading
-        if let LoadingState::Loading { message, .. } = &self.loading_state {
-            egui::Area::new(Id::new("loading_spinner_overlay"))
-                .fixed_pos((ctx.screen_rect().center().x - 100.0, ctx.screen_rect().center().y - 100.0))
-                .show(ctx, |ui| {
-                    ui.spacing_mut().item_spacing = egui::vec2(18.0, 18.0);
-                    ui.add_space(48.0);
-                    show_loading_spinner_custom(ui, message, Some(140.0));
-                    ui.add_space(48.0);
-                });
+        if let Some(err) = error_to_trigger {
+            self.toast_message = Some(format!("Error: {}", err));
+        }
+        // Apply pending_app_state if set
+        if let Some(new_state) = self.pending_app_state.take() {
+            self.app_state = new_state;
+        }
+        // Show loading spinner overlay if loading or finishing
+        match &self.loading_state {
+            LoadingState::Loading { message, .. } | LoadingState::Finishing { message } => {
+                egui::Area::new(Id::new("loading_spinner_overlay"))
+                    .fixed_pos((ctx.screen_rect().center().x - 100.0, ctx.screen_rect().center().y - 100.0))
+                    .show(ctx, |ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(18.0, 18.0);
+                        ui.add_space(48.0);
+                        show_loading_spinner_custom(ui, message, Some(140.0));
+                        ui.add_space(48.0);
+                    });
+            },
+            _ => {}
         }
         // Show toast if present
         if self.toast_message.is_some() {
             egui::Area::new(Id::new("toast_area"))
                 .fixed_pos((ctx.screen_rect().center().x - 150.0, ctx.screen_rect().bottom() - 60.0))
                 .show(ctx, |ui| {
-                    self.show_toast(ctx, ui);
+                    show_toast(self, ui);
                 });
         }
-        // Define available languages here for easy extensibility
-        // To add a new language, just add it to this array
-        const LANGUAGE_OPTIONS: &[&str] = &["Rust", "Python", "Javascript"];
         egui::SidePanel::left("side_panel").show(ctx, |ui| {
             ui.heading("Repository Sync & Search");
             ui.label("Select Language:");
             let is_loading = matches!(self.loading_state, LoadingState::Loading { .. });
-            for &lang in LANGUAGE_OPTIONS.iter() {
+            for &lang in LANGUAGES.iter() {
                 let selected = self.db.get_language() == lang;
                 if ui.radio(selected, lang).clicked() && !is_loading {
                     self.loading_state = LoadingState::Loading {
                         kind: LoadingKind::LanguageSwitch,
-                        timer: 2.0,
                         message: format!("Switching to {}...", lang),
                         pending_language: Some(lang.to_owned()),
                     };
@@ -217,7 +283,6 @@ impl eframe::App for TemplateApp {
             if ui.button("Sync").clicked() && !is_loading {
                 self.loading_state = LoadingState::Loading {
                     kind: LoadingKind::Sync,
-                    timer: 2.0,
                     message: "Syncing repositories...".to_owned(),
                     pending_language: None,
                 };
@@ -225,7 +290,6 @@ impl eframe::App for TemplateApp {
             if ui.button("Clear Cache").clicked() && !is_loading {
                 self.loading_state = LoadingState::Loading {
                     kind: LoadingKind::ClearCache,
-                    timer: 1.5,
                     message: "Clearing cache...".to_owned(),
                     pending_language: None,
                 };
@@ -233,7 +297,7 @@ impl eframe::App for TemplateApp {
             ui.separator();
             ui.label("Search:");
             ui.text_edit_singleline(&mut self.label);
-            let filtered = self.filter_repos(&self.label);
+            let filtered = self.filtered_repos.as_ref().cloned().unwrap_or_default();
             ui.separator();
             ui.label(format!("Results: {}", filtered.len()));
         });
@@ -252,7 +316,7 @@ impl eframe::App for TemplateApp {
             }
             ui.separator();
             ui.heading("Filtered Repositories");
-            let filtered = self.filter_repos(&self.label);
+            let filtered = self.filtered_repos.clone().unwrap_or_default();
             let current_language = self.db.get_language();
             if filtered.is_empty() {
                 ui.label(format!("There is no data for {}, please sync.", current_language));
@@ -273,6 +337,53 @@ impl eframe::App for TemplateApp {
             }
         });
 
-        // Show loading spinner if needed
+        // Update filtered_repos from egui context temp data if available
+        if let Some(repos) = ctx.data(|d| d.get_temp::<Vec<Repository>>(Id::new("waffle_filtered_repos"))) {
+            let is_empty = repos.is_empty();
+            self.filtered_repos = Some(repos.clone());
+            // Set app_state based on whether there is data
+            if is_empty {
+                self.app_state = AppState::Empty;
+            } else {
+                self.app_state = AppState::Normal;
+            }
+        }
+
+        // Show welcome dialog if DB is empty
+        if self.app_state == AppState::Empty {
+            egui::Window::new("Welcome to the Waffle!")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .show(ctx, |ui| {
+                    ui.heading("Welcome to the Waffle!");
+                    ui.label("Please sync the languages you would like to see.");
+                });
+        }
+    }
+}
+
+impl eframe::App for TemplateApp {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.update(ctx, frame);
+    }
+}
+
+// Change show_toast to a free function
+fn show_toast(app: &TemplateApp, ui: &mut egui::Ui) {
+    if let Some(msg) = &app.toast_message {
+        let toast_height = 44.0;
+        let toast_width = 360.0;
+        let rect = egui::Rect::from_min_size(
+            ui.max_rect().center_top() + egui::vec2(-toast_width / 2.0, 0.0),
+            egui::vec2(toast_width, toast_height),
+        );
+        egui::Area::new(Id::new("waffle_toast"))
+            .fixed_pos(rect.left_top())
+            .show(ui.ctx(), |ui| {
+                ui.group(|ui| {
+                    ui.label(msg);
+                });
+            });
     }
 }

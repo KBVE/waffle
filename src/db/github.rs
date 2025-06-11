@@ -1,11 +1,10 @@
 use ehttp::{self};
 #[cfg(target_arch = "wasm32")]
 use ehttp::{Mode};
-use idb::{ObjectStoreParams, Factory, DatabaseEvent};
 use wasm_bindgen_futures::spawn_local;
-use wasm_bindgen::JsValue;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
+use crate::db::idb;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Owner {
@@ -109,6 +108,7 @@ pub struct SearchResponse {
     pub items: Vec<Repository>,
 }
 
+#[derive(Clone)]
 pub struct GithubDb {
     repos: Arc<Mutex<Vec<Repository>>>,
     error: Arc<Mutex<Option<String>>>,
@@ -139,8 +139,15 @@ impl GithubDb {
         let key = format!("latest_{}", language.to_lowercase());
         let error = Arc::clone(&self.error);
         wasm_bindgen_futures::spawn_local(async move {
-            if let Err(e) = Self::delete_from_indexeddb(&key).await {
-                *error.lock().unwrap() = Some(format!("Failed to clear IndexedDB: {}", e));
+            match idb::open_waffle_db().await {
+                Ok(db) => {
+                    if let Err(e) = idb::delete_repo(&db, &language, &key).await {
+                        *error.lock().unwrap() = Some(format!("Failed to clear IndexedDB: {}", e));
+                    }
+                }
+                Err(e) => {
+                    *error.lock().unwrap() = Some(format!("Failed to open IndexedDB: {}", e));
+                }
             }
         });
     }
@@ -150,7 +157,6 @@ impl GithubDb {
         let error = Arc::clone(&self.error);
         let is_loading = Arc::clone(&self.is_loading);
         let language = self.get_language();
-        let key = format!("latest_{}", language.to_lowercase());
         *is_loading.lock().unwrap() = true;
         let request = ehttp::Request {
             method: String::from("GET"),
@@ -165,7 +171,7 @@ impl GithubDb {
             match result {
                 Ok(response) => {
                     if response.ok {
-                        match response.json::<SearchResponse>() {
+                        match response.json::<crate::db::github::SearchResponse>() {
                             Ok(search_response) => {
                                 let filtered_repos = search_response
                                     .items
@@ -174,11 +180,21 @@ impl GithubDb {
                                     .collect::<Vec<_>>();
                                 let filtered_repos_for_mutex = filtered_repos.clone();
                                 let filtered_repos_for_async = filtered_repos_for_mutex.clone();
-                                let key = key.clone();
                                 *repos.lock().unwrap() = filtered_repos_for_mutex;
                                 wasm_bindgen_futures::spawn_local(async move {
-                                    if let Err(e) = Self::store_repos_in_indexeddb(&key, &filtered_repos_for_async).await {
-                                        *error.lock().unwrap() = Some(format!("Failed to store in IndexedDB: {}", e));
+                                    match idb::open_waffle_db().await {
+                                        Ok(db) => {
+                                            // Store each repo individually
+                                            for repo in &filtered_repos_for_async {
+                                                let key = repo.full_name.clone().unwrap_or_else(|| repo.id.map(|id| id.to_string()).unwrap_or_else(|| "unknown".to_string()));
+                                                if let Err(e) = idb::add_repo(&db, &language, &key, repo).await {
+                                                    *error.lock().unwrap() = Some(format!("Failed to store repo {} in IndexedDB: {}", key, e));
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            *error.lock().unwrap() = Some(format!("Failed to open IndexedDB: {}", e));
+                                        }
                                     }
                                 });
                             }
@@ -197,19 +213,28 @@ impl GithubDb {
         });
     }
 
-    // Load from IndexedDB
     pub fn load_from_indexeddb(&self) {
         let repos = Arc::clone(&self.repos);
         let error = Arc::clone(&self.error);
         let language = self.get_language();
         let key = format!("latest_{}", language.to_lowercase());
         wasm_bindgen_futures::spawn_local(async move {
-            match Self::read_from_indexeddb(&key).await {
-                Ok(cached_repos) => {
-                    *repos.lock().unwrap() = cached_repos;
+            match idb::open_waffle_db().await {
+                Ok(db) => {
+                    match idb::get_repo::<Vec<crate::db::github::Repository>>(&db, &language, &key).await {
+                        Ok(Some(cached_repos)) => {
+                            *repos.lock().unwrap() = cached_repos;
+                        }
+                        Ok(None) => {
+                            *repos.lock().unwrap() = vec![];
+                        }
+                        Err(e) => {
+                            *error.lock().unwrap() = Some(format!("Failed to load from IndexedDB: {}", e));
+                        }
+                    }
                 }
                 Err(e) => {
-                    *error.lock().unwrap() = Some(format!("Failed to load from IndexedDB: {}", e));
+                    *error.lock().unwrap() = Some(format!("Failed to open IndexedDB: {}", e));
                 }
             }
         });
@@ -249,16 +274,24 @@ impl GithubDb {
                                     .filter(|repo| repo.license.is_some())
                                     .collect::<Vec<_>>();
 
-                                
                                 *repos.lock().unwrap() = filtered_repos.clone();
 
                                 // Store in IndexedDB asynchronously (WASM only)
                                 {
                                     let filtered_repos_for_async = filtered_repos.clone();
                                     let key = "latest_rust".to_string();
+                                    let language = "rust".to_string();
                                     spawn_local(async move {
-                                        if let Err(e) = Self::store_repos_in_indexeddb(&key, &filtered_repos_for_async).await {
-                                            *error.lock().unwrap() = Some(format!("Failed to store in IndexedDB: {}", e));
+                                        // Use idb.rs public API for storing repos
+                                        match idb::open_waffle_db().await {
+                                            Ok(db) => {
+                                                if let Err(e) = idb::add_repo(&db, &language, &key, &filtered_repos_for_async).await {
+                                                    *error.lock().unwrap() = Some(format!("Failed to store in IndexedDB: {}", e));
+                                                }
+                                            }
+                                            Err(e) => {
+                                                *error.lock().unwrap() = Some(format!("Failed to open IndexedDB: {}", e));
+                                            }
                                         }
                                     });
                                 }
@@ -276,92 +309,6 @@ impl GithubDb {
                 }
             }
         });
-    }
-
-    // IndexedDB helpers
-    async fn read_from_indexeddb(key: &str) -> Result<Vec<Repository>, String> {
-        let factory = Factory::new().map_err(|e| format!("Failed to create IndexedDB factory: {:?}", e))?;
-        let db = factory
-            .open("RustProjectsDB", None)
-            .map_err(|e| format!("Failed to open database: {:?}", e))?
-            .await
-            .map_err(|e| format!("Failed to open database: {:?}", e))?;
-        let tx = db
-            .transaction(&["repositories"], idb::TransactionMode::ReadOnly)
-            .map_err(|e| format!("Failed to create transaction: {:?}", e))?;
-        let store = tx
-            .object_store("repositories")
-            .map_err(|e| format!("Failed to access object store: {:?}", e))?;
-        let value = store
-            .get(JsValue::from_str(key))
-            .map_err(|e| format!("Failed to get data: {:?}", e))?
-            .await
-            .map_err(|e| format!("Failed to get data: {:?}", e))?;
-        if let Some(value) = value {
-            let json = serde_wasm_bindgen::from_value::<serde_json::Value>(value)
-                .map_err(|e| format!("Failed to deserialize JSON: {:?}", e))?;
-            let search_response = serde_json::from_value::<SearchResponse>(json)
-                .map_err(|e| format!("Failed to parse search response: {:?}", e))?;
-            Ok(search_response.items.into_iter().filter(|repo| repo.license.is_some()).collect())
-        } else {
-            Ok(vec![])
-        }
-    }
-
-    async fn store_repos_in_indexeddb(key: &str, repos: &Vec<Repository>) -> Result<(), String> {
-        let factory = Factory::new().map_err(|e| format!("Failed to create IndexedDB factory: {:?}", e))?;
-        let mut open_request = factory
-            .open("RustProjectsDB", Some(1))
-            .map_err(|e| format!("Failed to open database: {:?}", e))?;
-        open_request.on_upgrade_needed(|event| {
-            let db = event.database().expect("Failed to get database");
-            let store_params = ObjectStoreParams::new();
-            db.create_object_store("repositories", store_params)
-                .expect("Failed to create object store");
-        });
-        let db = open_request
-            .await
-            .map_err(|e| format!("Failed to open database: {:?}", e))?;
-        let tx = db
-            .transaction(&["repositories"], idb::TransactionMode::ReadWrite)
-            .map_err(|e| format!("Failed to create transaction: {:?}", e))?;
-        let store = tx
-            .object_store("repositories")
-            .map_err(|e| format!("Failed to access object store: {:?}", e))?;
-        store
-            .put(
-                &serde_wasm_bindgen::to_value(&SearchResponse {
-                    total_count: Some(repos.len() as u64),
-                    incomplete_results: Some(false),
-                    items: repos.clone(),
-                }).map_err(|e| format!("Failed to convert to JsValue: {:?}", e))?,
-                Some(&JsValue::from_str(key)),
-            )
-            .map_err(|e| format!("Failed to store data: {:?}", e))?;
-        tx.await.map_err(|e| format!("Failed to complete transaction: {:?}", e))?;
-        Ok(())
-    }
-
-    async fn delete_from_indexeddb(key: &str) -> Result<(), String> {
-        let factory = Factory::new().map_err(|e| format!("Failed to create IndexedDB factory: {:?}", e))?;
-        let db = factory
-            .open("RustProjectsDB", None)
-            .map_err(|e| format!("Failed to open database: {:?}", e))?
-            .await
-            .map_err(|e| format!("Failed to open database: {:?}", e))?;
-        let tx = db
-            .transaction(&["repositories"], idb::TransactionMode::ReadWrite)
-            .map_err(|e| format!("Failed to create transaction: {:?}", e))?;
-        let store = tx
-            .object_store("repositories")
-            .map_err(|e| format!("Failed to access object store: {:?}", e))?;
-        store
-            .delete(JsValue::from_str(key))
-            .map_err(|e| format!("Failed to delete data: {:?}", e))?
-            .await
-            .map_err(|e| format!("Failed to delete data: {:?}", e))?;
-        tx.await.map_err(|e| format!("Failed to complete transaction: {:?}", e))?;
-        Ok(())
     }
 
     pub fn get_repos(&self) -> Arc<Mutex<Vec<Repository>>> {
