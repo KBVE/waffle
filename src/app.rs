@@ -116,7 +116,6 @@ impl eframe::App for TemplateApp {
 
     /// Called each time the UI needs repainting, which may be many times per second.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.update_loading_state();
         // Toast timer logic
         if let Some(_) = self.toast_message {
             let dt = ctx.input(|i| i.unstable_dt);
@@ -132,8 +131,14 @@ impl eframe::App for TemplateApp {
             if self.loading_timer <= 0.0 {
                 self.is_loading = false;
                 self.loading_timer = 0.0;
-                self.trigger_toast(&self.loading_message.replace("Switching to ", "Switched to ").replace("...", "!"));
                 // Actually switch language and load data here if needed
+                if let Some(pending_language) = self.loading_message.strip_prefix("Switching to ").and_then(|s| s.strip_suffix("...")) {
+                    self.db.set_language(pending_language.trim());
+                    self.db.load_from_indexeddb();
+                    self.trigger_toast(&self.loading_message.replace("Switching to ", "Switched to ").replace("...", "!"));
+                } else {
+                    self.trigger_toast(&self.loading_message.replace("...", "!"));
+                }
             }
         }
         // Show loading spinner overlay if loading
@@ -160,12 +165,10 @@ impl eframe::App for TemplateApp {
             ui.label("Select Language:");
             for &lang in LANGUAGE_OPTIONS.iter() {
                 let selected = self.db.get_language() == lang;
-                if ui.radio(selected, lang).clicked() {
+                if ui.radio(selected, lang).clicked() && !self.is_loading {
                     self.loading_message = format!("Switching to {}...", lang);
                     self.is_loading = true;
                     self.loading_timer = 3.0;
-                    // self.db.set_language(lang); // Move this to after loading if you want to delay the switch
-                    // self.db.load_from_indexeddb(); // Move this to after loading if you want to delay the load
                 }
             }
             ui.separator();
@@ -222,12 +225,9 @@ impl eframe::App for TemplateApp {
             }
         });
 
-        // Update and show loading state
-        self.update_loading_state();
+        // Show loading spinner if needed
         if self.is_loading {
-            let _response = ctx.screen_rect();
-            // Remove all ctx.layer_painter() usages and related painter code from update and overlays
-            // Only use egui::Area and Ui for overlays and drawing
+            // Removed redundant self.update_loading_state() call here
         }
 
         // Remove this line, it is invalid and causes errors:
