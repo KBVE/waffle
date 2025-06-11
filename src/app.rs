@@ -1,7 +1,26 @@
 // Use the utility module from crate root
-use crate::utility::show_loading_spinner;
+use crate::utility::show_loading_spinner_custom;
 use egui::Id;
 use crate::db::github::{GithubDb, Repository};
+
+#[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
+pub enum LoadingState {
+    Idle,
+    Loading {
+        kind: LoadingKind,
+        timer: f32,
+        message: String,
+        pending_language: Option<String>,
+    },
+    Error,
+}
+
+#[derive(serde::Deserialize, serde::Serialize, PartialEq, Eq, Debug, Clone, Copy)]
+pub enum LoadingKind {
+    LanguageSwitch,
+    Sync,
+    ClearCache,
+}
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -17,17 +36,13 @@ pub struct TemplateApp {
     logo_texture: Option<egui::TextureHandle>,
     #[serde(skip)]
     logo_loaded: bool,
-    // Loading and toast state
+    // Loader and toast state
     #[serde(skip)]
-    is_loading: bool,
-    #[serde(skip)]
-    loading_message: String,
+    loading_state: LoadingState,
     #[serde(skip)]
     toast_message: Option<String>,
     #[serde(skip)]
     toast_timer: f32,
-    #[serde(skip)]
-    loading_timer: f32,
 }
 
 impl Default for TemplateApp {
@@ -39,11 +54,9 @@ impl Default for TemplateApp {
             db: GithubDb::new(),
             logo_texture: None,
             logo_loaded: false,
-            is_loading: false,
-            loading_message: String::new(),
+            loading_state: LoadingState::Idle,
             toast_message: None,
             toast_timer: 0.0,
-            loading_timer: 0.0,
         }
     }
 }
@@ -79,20 +92,32 @@ impl TemplateApp {
 
     fn show_toast(&mut self, _ctx: &egui::Context, ui: &mut egui::Ui) {
         if let Some(msg) = &self.toast_message {
-            let toast_height = 32.0;
-            let toast_width = 300.0;
+            let toast_height = 44.0;
+            let toast_width = 360.0;
             let rect = egui::Rect::from_min_size(
                 ui.max_rect().center_top() + egui::vec2(-toast_width / 2.0, 0.0),
                 egui::vec2(toast_width, toast_height),
             );
             let painter = ui.painter();
-            painter.rect_filled(rect, 8.0, egui::Color32::from_rgba_unmultiplied(30, 144, 255, 220));
+            // Fade out effect based on timer
+            let alpha = (self.toast_timer / 2.5).clamp(0.0, 1.0);
+            // Dark stone 950 background
+            let bg_color = egui::Color32::from_rgba_unmultiplied(18, 24, 27, (240.0 * alpha) as u8);
+            // Bright cyan font
+            let font_color = egui::Color32::from_rgb(0, 255, 255);
+            // Light purple border/accent
+            let accent_color = egui::Color32::from_rgb(180, 140, 255);
+            // Shadow
+            let shadow_rect = rect.expand(10.0);
+            painter.rect_filled(shadow_rect, 18.0, egui::Color32::from_rgba_unmultiplied(80, 0, 120, (40.0 * alpha) as u8));
+            painter.rect_filled(rect, 12.0, bg_color);
+            painter.rect_stroke(rect, 12.0, egui::epaint::Stroke::new(2.0, accent_color), egui::epaint::StrokeKind::Outside);
             painter.text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
                 msg,
                 egui::TextStyle::Button.resolve(ui.style()),
-                egui::Color32::WHITE,
+                font_color,
             );
         }
     }
@@ -100,11 +125,6 @@ impl TemplateApp {
     fn trigger_toast(&mut self, message: &str) {
         self.toast_message = Some(message.to_owned());
         self.toast_timer = 2.5; // seconds
-    }
-
-    fn update_loading_state(&mut self) {
-        // Use a public getter for is_loading
-        self.is_loading = self.db.is_loading();
     }
 }
 
@@ -124,29 +144,46 @@ impl eframe::App for TemplateApp {
                 self.toast_message = None;
             }
         }
-        // Loading timer logic (for fake spinner)
-        if self.is_loading && self.loading_timer > 0.0 {
-            let dt = ctx.input(|i| i.unstable_dt);
-            self.loading_timer -= dt;
-            if self.loading_timer <= 0.0 {
-                self.is_loading = false;
-                self.loading_timer = 0.0;
-                // Actually switch language and load data here if needed
-                if let Some(pending_language) = self.loading_message.strip_prefix("Switching to ").and_then(|s| s.strip_suffix("...")) {
-                    self.db.set_language(pending_language.trim());
-                    self.db.load_from_indexeddb();
-                    self.trigger_toast(&self.loading_message.replace("Switching to ", "Switched to ").replace("...", "!"));
-                } else {
-                    self.trigger_toast(&self.loading_message.replace("...", "!"));
+        // Loading state machine
+        match &mut self.loading_state {
+            LoadingState::Idle => {},
+            LoadingState::Loading { kind, timer, message: _, pending_language } => {
+                let dt = ctx.input(|i| i.unstable_dt);
+                *timer -= dt;
+                if *timer <= 0.0 {
+                    match kind {
+                        LoadingKind::LanguageSwitch => {
+                            if let Some(lang) = pending_language.take() {
+                                self.db.set_language(&lang);
+                                self.db.load_from_indexeddb();
+                                self.trigger_toast(&format!("Switched to {}!", lang));
+                            }
+                        },
+                        LoadingKind::Sync => {
+                            self.db.sync_and_store();
+                            self.trigger_toast("Repositories synced!");
+                        },
+                        LoadingKind::ClearCache => {
+                            self.db.clear_indexeddb();
+                            self.trigger_toast("Cache cleared!");
+                        },
+                    }
+                    self.loading_state = LoadingState::Idle;
                 }
-            }
+            },
+            LoadingState::Error => {
+                // Could show an error toast or overlay here
+            },
         }
         // Show loading spinner overlay if loading
-        if self.is_loading {
+        if let LoadingState::Loading { message, .. } = &self.loading_state {
             egui::Area::new(Id::new("loading_spinner_overlay"))
-                .fixed_pos((ctx.screen_rect().center().x - 60.0, ctx.screen_rect().center().y - 60.0))
+                .fixed_pos((ctx.screen_rect().center().x - 100.0, ctx.screen_rect().center().y - 100.0))
                 .show(ctx, |ui| {
-                    show_loading_spinner(ui, &self.loading_message, None);
+                    ui.spacing_mut().item_spacing = egui::vec2(18.0, 18.0);
+                    ui.add_space(48.0);
+                    show_loading_spinner_custom(ui, message, Some(140.0));
+                    ui.add_space(48.0);
                 });
         }
         // Show toast if present
@@ -163,24 +200,35 @@ impl eframe::App for TemplateApp {
         egui::SidePanel::left("side_panel").show(ctx, |ui| {
             ui.heading("Repository Sync & Search");
             ui.label("Select Language:");
+            let is_loading = matches!(self.loading_state, LoadingState::Loading { .. });
             for &lang in LANGUAGE_OPTIONS.iter() {
                 let selected = self.db.get_language() == lang;
-                if ui.radio(selected, lang).clicked() && !self.is_loading {
-                    self.loading_message = format!("Switching to {}...", lang);
-                    self.is_loading = true;
-                    self.loading_timer = 3.0;
+                if ui.radio(selected, lang).clicked() && !is_loading {
+                    self.loading_state = LoadingState::Loading {
+                        kind: LoadingKind::LanguageSwitch,
+                        timer: 2.0,
+                        message: format!("Switching to {}...", lang),
+                        pending_language: Some(lang.to_owned()),
+                    };
                 }
             }
             ui.separator();
-            if ui.button("Sync").clicked() {
-                self.loading_message = "Syncing repositories...".to_owned();
-                self.is_loading = true;
-                self.db.sync_and_store();
+            let is_loading = matches!(self.loading_state, LoadingState::Loading { .. });
+            if ui.button("Sync").clicked() && !is_loading {
+                self.loading_state = LoadingState::Loading {
+                    kind: LoadingKind::Sync,
+                    timer: 2.0,
+                    message: "Syncing repositories...".to_owned(),
+                    pending_language: None,
+                };
             }
-            if ui.button("Clear Cache").clicked() {
-                self.loading_message = "Clearing cache...".to_owned();
-                self.is_loading = true;
-                self.db.clear_indexeddb();
+            if ui.button("Clear Cache").clicked() && !is_loading {
+                self.loading_state = LoadingState::Loading {
+                    kind: LoadingKind::ClearCache,
+                    timer: 1.5,
+                    message: "Clearing cache...".to_owned(),
+                    pending_language: None,
+                };
             }
             ui.separator();
             ui.label("Search:");
@@ -226,12 +274,5 @@ impl eframe::App for TemplateApp {
         });
 
         // Show loading spinner if needed
-        if self.is_loading {
-            // Removed redundant self.update_loading_state() call here
-        }
-
-        // Remove this line, it is invalid and causes errors:
-        // self.show_toast(ctx, &mut ctx.layer_painter());
-        // The toast is already shown via egui::Area above.
     }
 }
