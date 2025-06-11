@@ -5,6 +5,7 @@ use crate::db::github::{GithubDb, Repository};
 use crate::db::idb::LANGUAGES;
 use crate::erust::uiux::search::SearchWidget;
 use crate::erust::state::{AppState, WaffleState};
+use crate::erust::uiux::auth::AuthWidget;
 
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone, PartialEq, Eq)]
 pub enum LoadingState {
@@ -60,6 +61,8 @@ pub struct TemplateApp {
     filter_loading: bool,
     #[serde(skip)]
     search_widget: Option<SearchWidget>,
+    #[serde(skip)]
+    auth_widget: AuthWidget,
 }
 
 impl Default for TemplateApp {
@@ -80,6 +83,7 @@ impl Default for TemplateApp {
             filtered_repos: None,
             filter_loading: false,
             search_widget: Some(SearchWidget::new()),
+            auth_widget: AuthWidget::new(false),
         }
     }
 }
@@ -338,6 +342,15 @@ impl TemplateApp {
                 }
             }
         });
+
+        // --- Authentication Widget (Login/Register) ---
+        egui::Window::new("Authentication")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_TOP, egui::Vec2::new(0.0, 40.0))
+            .show(ctx, |ui| {
+                self.auth_widget.show(ctx, ui);
+            });
 
         // Update filtered_repos from egui context temp data if available
         if let Some(widget) = &mut self.search_widget {
