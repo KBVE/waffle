@@ -144,10 +144,12 @@
 
     <!-- hCaptcha widget integration -->
     <script src="https://js.hcaptcha.com/1/api.js" async defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+
     <div id="captcha-container" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.7); z-index:9999; align-items:center; justify-content:center;">
         <div style="background:#222; padding:32px; border-radius:12px; display:inline-block;">
             <div id="hcaptcha-widget" class="h-captcha" data-sitekey="your-hcaptcha-site-key" data-callback="onHCaptchaSuccess"></div>
-            <button onclick="closeCaptcha()" style="margin-top:16px;">Cancel</button>
+            <button onclick="closeCaptcha()" style="margin-top:16px;" class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded shadow transition-colors duration-150">Cancel</button>
         </div>
     </div>
     <script>
