@@ -1,38 +1,39 @@
-// idb.rs
-// IndexedDB abstraction for Waffle
-
 use idb::{Database, DatabaseEvent, Error, Factory, ObjectStoreParams, TransactionMode};
 use serde::{Serialize, de::DeserializeOwned};
 use wasm_bindgen::JsValue;
 
 const DB_NAME: &str = "WaffleDB";
 const DB_VERSION: u32 = 1;
-const STORE_NAME: &str = "repositories";
 
-pub async fn open_waffle_db() -> Result<Database, Error> {
+pub async fn open_waffle_db_with_languages(languages: &[&str]) -> Result<Database, Error> {
     let factory = Factory::new()?;
     let mut open_request = factory.open(DB_NAME, Some(DB_VERSION))?;
-    open_request.on_upgrade_needed(|event| {
+    let langs = languages.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    open_request.on_upgrade_needed(move |event| {
         let db = event.database().unwrap();
-        let mut store_params = ObjectStoreParams::new();
-        store_params.auto_increment(false);
-        db.create_object_store(STORE_NAME, store_params).unwrap();
+        for lang in &langs {
+            if db.store_names().iter().all(|n| n != lang) {
+                let mut store_params = ObjectStoreParams::new();
+                store_params.auto_increment(false);
+                db.create_object_store(lang, store_params).unwrap();
+            }
+        }
     });
     open_request.await
 }
 
-pub async fn add_repo<T: Serialize>(db: &Database, key: &str, value: &T) -> Result<(), Error> {
-    let tx = db.transaction(&[STORE_NAME], TransactionMode::ReadWrite)?;
-    let store = tx.object_store(STORE_NAME).unwrap();
+pub async fn add_repo<T: Serialize>(db: &Database, language: &str, key: &str, value: &T) -> Result<(), Error> {
+    let tx = db.transaction(&[language], TransactionMode::ReadWrite)?;
+    let store = tx.object_store(language).unwrap();
     let js_value = serde_wasm_bindgen::to_value(value).unwrap();
     store.put(&js_value, Some(&JsValue::from_str(key)))?;
     tx.await?;
     Ok(())
 }
 
-pub async fn get_repo<T: DeserializeOwned>(db: &Database, key: &str) -> Result<Option<T>, Error> {
-    let tx = db.transaction(&[STORE_NAME], TransactionMode::ReadOnly)?;
-    let store = tx.object_store(STORE_NAME).unwrap();
+pub async fn get_repo<T: DeserializeOwned>(db: &Database, language: &str, key: &str) -> Result<Option<T>, Error> {
+    let tx = db.transaction(&[language], TransactionMode::ReadOnly)?;
+    let store = tx.object_store(language).unwrap();
     let result = store.get(JsValue::from_str(key))?.await?;
     tx.await?;
     if let Some(js_value) = result {
@@ -42,18 +43,17 @@ pub async fn get_repo<T: DeserializeOwned>(db: &Database, key: &str) -> Result<O
     }
 }
 
-pub async fn delete_repo(db: &Database, key: &str) -> Result<(), Error> {
-    let tx = db.transaction(&[STORE_NAME], TransactionMode::ReadWrite)?;
-    let store = tx.object_store(STORE_NAME).unwrap();
+pub async fn delete_repo(db: &Database, language: &str, key: &str) -> Result<(), Error> {
+    let tx = db.transaction(&[language], TransactionMode::ReadWrite)?;
+    let store = tx.object_store(language).unwrap();
     store.delete(JsValue::from_str(key))?.await?;
     tx.await?;
     Ok(())
 }
 
-pub async fn get_all_repos<T: DeserializeOwned>(db: &Database) -> Result<Vec<T>, Error> {
-    let tx = db.transaction(&[STORE_NAME], TransactionMode::ReadOnly)?;
-    let store = tx.object_store(STORE_NAME).unwrap();
-    // Fix: use the correct method and error handling for cursor
+pub async fn get_all_repos<T: DeserializeOwned>(db: &Database, language: &str) -> Result<Vec<T>, Error> {
+    let tx = db.transaction(&[language], TransactionMode::ReadOnly)?;
+    let store = tx.object_store(language).unwrap();
     let mut results = Vec::new();
     let cursor = store.open_cursor(None, None)?;
     let mut cursor = cursor.await?;
@@ -67,16 +67,14 @@ pub async fn get_all_repos<T: DeserializeOwned>(db: &Database) -> Result<Vec<T>,
 }
 
 pub async fn filter_repos_in_idb<T: DeserializeOwned + Clone>(db: &Database, language: &str, query: &str) -> Result<Vec<T>, Error> {
-    let tx = db.transaction(&[STORE_NAME], TransactionMode::ReadOnly)?;
-    let store = tx.object_store(STORE_NAME).unwrap();
+    let tx = db.transaction(&[language], TransactionMode::ReadOnly)?;
+    let store = tx.object_store(language).unwrap();
     let mut results = Vec::new();
     let cursor = store.open_cursor(None, None)?;
     let mut cursor = cursor.await?;
     while let Some(cur) = cursor {
         let value: T = serde_wasm_bindgen::from_value(cur.value()?.clone()).unwrap();
         // Filtering logic: assumes T is crate::db::github::Repository
-        // If T is Repository:
-        // (If you want to make this generic, you can add trait bounds or use a closure)
         let repo = unsafe { &*(std::ptr::addr_of!(value) as *const crate::db::github::Repository) };
         let repo_lang = repo.language.as_deref().unwrap_or("");
         let repo_name = repo.full_name.as_deref().unwrap_or("");

@@ -99,10 +99,10 @@ impl TemplateApp {
     async fn check_empty_and_update_state_async(&mut self) {
         use crate::db::idb;
         use crate::db::github::Repository;
-        if let Ok(db) = idb::open_waffle_db().await {
+        if let Ok(db) = idb::open_waffle_db_with_languages(&[&self.db.get_language()]).await {
             let language = self.db.get_language();
             let key = format!("latest_{}", language.to_lowercase());
-            match idb::get_repo::<Vec<Repository>>(&db, &key).await {
+            match idb::get_repo::<Vec<Repository>>(&db, &language, &key).await {
                 Ok(Some(repos)) => {
                     if repos.is_empty() {
                         self.pending_app_state = Some(AppState::Empty);
@@ -129,7 +129,7 @@ impl TemplateApp {
         let language = self.db.get_language();
         let ctx = ctx.clone(); // keep this, as it is used in the async block
         wasm_bindgen_futures::spawn_local(async move {
-            let result = match crate::db::idb::open_waffle_db().await {
+            let result = match crate::db::idb::open_waffle_db_with_languages(&[&language]).await {
                 Ok(db_conn) => crate::db::idb::filter_repos_in_idb::<Repository>(&db_conn, &language, &query).await.unwrap_or_default(),
                 Err(_) => vec![],
             };

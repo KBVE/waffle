@@ -139,9 +139,9 @@ impl GithubDb {
         let key = format!("latest_{}", language.to_lowercase());
         let error = Arc::clone(&self.error);
         wasm_bindgen_futures::spawn_local(async move {
-            match idb::open_waffle_db().await {
+            match idb::open_waffle_db_with_languages(&[&language]).await {
                 Ok(db) => {
-                    if let Err(e) = idb::delete_repo(&db, &key).await {
+                    if let Err(e) = idb::delete_repo(&db, &language, &key).await {
                         *error.lock().unwrap() = Some(format!("Failed to clear IndexedDB: {}", e));
                     }
                 }
@@ -184,9 +184,9 @@ impl GithubDb {
                                 let key = key.clone();
                                 *repos.lock().unwrap() = filtered_repos_for_mutex;
                                 wasm_bindgen_futures::spawn_local(async move {
-                                    match idb::open_waffle_db().await {
+                                    match idb::open_waffle_db_with_languages(&[&language]).await {
                                         Ok(db) => {
-                                            if let Err(e) = idb::add_repo(&db, &key, &filtered_repos_for_async).await {
+                                            if let Err(e) = idb::add_repo(&db, &language, &key, &filtered_repos_for_async).await {
                                                 *error.lock().unwrap() = Some(format!("Failed to store in IndexedDB: {}", e));
                                             }
                                         }
@@ -217,9 +217,9 @@ impl GithubDb {
         let language = self.get_language();
         let key = format!("latest_{}", language.to_lowercase());
         wasm_bindgen_futures::spawn_local(async move {
-            match idb::open_waffle_db().await {
+            match idb::open_waffle_db_with_languages(&[&language]).await {
                 Ok(db) => {
-                    match idb::get_repo::<Vec<crate::db::github::Repository>>(&db, &key).await {
+                    match idb::get_repo::<Vec<crate::db::github::Repository>>(&db, &language, &key).await {
                         Ok(Some(cached_repos)) => {
                             *repos.lock().unwrap() = cached_repos;
                         }
@@ -278,11 +278,12 @@ impl GithubDb {
                                 {
                                     let filtered_repos_for_async = filtered_repos.clone();
                                     let key = "latest_rust".to_string();
+                                    let language = "rust".to_string();
                                     spawn_local(async move {
                                         // Use idb.rs public API for storing repos
-                                        match idb::open_waffle_db().await {
+                                        match idb::open_waffle_db_with_languages(&[&language]).await {
                                             Ok(db) => {
-                                                if let Err(e) = idb::add_repo(&db, &key, &filtered_repos_for_async).await {
+                                                if let Err(e) = idb::add_repo(&db, &language, &key, &filtered_repos_for_async).await {
                                                     *error.lock().unwrap() = Some(format!("Failed to store in IndexedDB: {}", e));
                                                 }
                                             }
