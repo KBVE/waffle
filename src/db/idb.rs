@@ -5,10 +5,13 @@ use wasm_bindgen::JsValue;
 const DB_NAME: &str = "WaffleDB";
 const DB_VERSION: u32 = 1;
 
-pub async fn open_waffle_db_with_languages(languages: &[&str]) -> Result<Database, Error> {
+// Define all supported languages here (must match UI radio button options)
+pub const LANGUAGES: &[&str] = &["Rust", "Python", "Javascript"];
+
+pub async fn open_waffle_db() -> Result<Database, Error> {
     let factory = Factory::new()?;
     let mut open_request = factory.open(DB_NAME, Some(DB_VERSION))?;
-    let langs = languages.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let langs = LANGUAGES.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     open_request.on_upgrade_needed(move |event| {
         let db = event.database().unwrap();
         for lang in &langs {

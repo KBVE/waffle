@@ -2,6 +2,7 @@
 use crate::utility::show_loading_spinner_custom;
 use egui::Id;
 use crate::db::github::{GithubDb, Repository};
+use crate::db::idb::LANGUAGES;
 
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone, PartialEq, Eq)]
 pub enum AppState {
@@ -99,7 +100,7 @@ impl TemplateApp {
     async fn check_empty_and_update_state_async(&mut self) {
         use crate::db::idb;
         use crate::db::github::Repository;
-        if let Ok(db) = idb::open_waffle_db_with_languages(&[&self.db.get_language()]).await {
+        if let Ok(db) = idb::open_waffle_db().await {
             let language = self.db.get_language();
             let key = format!("latest_{}", language.to_lowercase());
             match idb::get_repo::<Vec<Repository>>(&db, &language, &key).await {
@@ -129,7 +130,7 @@ impl TemplateApp {
         let language = self.db.get_language();
         let ctx = ctx.clone(); // keep this, as it is used in the async block
         wasm_bindgen_futures::spawn_local(async move {
-            let result = match crate::db::idb::open_waffle_db_with_languages(&[&language]).await {
+            let result = match crate::db::idb::open_waffle_db().await {
                 Ok(db_conn) => crate::db::idb::filter_repos_in_idb::<Repository>(&db_conn, &language, &query).await.unwrap_or_default(),
                 Err(_) => vec![],
             };
@@ -157,6 +158,17 @@ impl TemplateApp {
                         if let Some(lang) = pending_language.take() {
                             self.db.set_language(&lang);
                             self.db.load_from_indexeddb();
+                            // Immediately reload filtered repos for the new language
+                            let language = self.db.get_language();
+                            let ctx = ctx.clone();
+                            wasm_bindgen_futures::spawn_local(async move {
+                                let result = match crate::db::idb::open_waffle_db().await {
+                                    Ok(db_conn) => crate::db::idb::filter_repos_in_idb::<Repository>(&db_conn, &language, "").await.unwrap_or_default(),
+                                    Err(_) => vec![],
+                                };
+                                ctx.data_mut(|d| d.insert_temp(Id::new("waffle_filtered_repos"), result));
+                                ctx.request_repaint();
+                            });
                         }
                     },
                     LoadingKind::Sync => {
@@ -228,14 +240,11 @@ impl TemplateApp {
                     show_toast(self, ui);
                 });
         }
-        // Define available languages here for easy extensibility
-        // To add a new language, just add it to this array
-        const LANGUAGE_OPTIONS: &[&str] = &["Rust", "Python", "Javascript"];
         egui::SidePanel::left("side_panel").show(ctx, |ui| {
             ui.heading("Repository Sync & Search");
             ui.label("Select Language:");
             let is_loading = matches!(self.loading_state, LoadingState::Loading { .. });
-            for &lang in LANGUAGE_OPTIONS.iter() {
+            for &lang in LANGUAGES.iter() {
                 let selected = self.db.get_language() == lang;
                 if ui.radio(selected, lang).clicked() && !is_loading {
                     self.loading_state = LoadingState::Loading {
