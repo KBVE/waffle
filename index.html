@@ -7,7 +7,7 @@
 
 <head>
     <!-- change this to your project name -->
-    <title>eframe template</title>
+    <title>Waffle - Template</title>
 
     <!-- config for our rust wasm binary. go to https://trunkrs.dev/assets/#rust for more customization -->
     <link data-trunk rel="rust" data-wasm-opt="2" />
@@ -141,6 +141,57 @@
             });
         }
     </script>
+
+    <!-- hCaptcha widget integration -->
+    <script src="https://js.hcaptcha.com/1/api.js" async defer></script>
+    <div id="captcha-container" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.7); z-index:9999; align-items:center; justify-content:center;">
+        <div style="background:#222; padding:32px; border-radius:12px; display:inline-block;">
+            <div id="hcaptcha-widget" class="h-captcha" data-sitekey="your-hcaptcha-site-key" data-callback="onHCaptchaSuccess"></div>
+            <button onclick="closeCaptcha()" style="margin-top:16px;">Cancel</button>
+        </div>
+    </div>
+    <script>
+        // Show/hide captcha overlay via a single JS entrypoint for Rust/WASM
+        function openCaptcha() {
+            document.getElementById('captcha-container').style.display = 'flex';
+        }
+        function closeCaptcha() {
+            document.getElementById('captcha-container').style.display = 'none';
+        }
+        // Unified JS entrypoint for Rust/WASM with action/message
+        function JSRust(action, message) {
+            switch(action) {
+                case 'openCaptcha':
+                    openCaptcha();
+                    break;
+                case 'closeCaptcha':
+                    closeCaptcha();
+                    break;
+                case 'log':
+                    if (message) {
+                        console.log('[JSRust]', message);
+                    }
+                    break;
+                // Add more actions as needed
+                default:
+                    console.warn('[JSRust] Unknown action:', action, message);
+            }
+        }
+        // Called by hCaptcha when solved
+        function onHCaptchaSuccess(token) {
+            JSRust('closeCaptcha');
+            if (window.wasm_bindgen && window.wasm_bindgen.pass_captcha_token) {
+                window.wasm_bindgen.pass_captcha_token(token);
+            } else if (window.pass_captcha_token) {
+                window.pass_captcha_token(token);
+            }
+        }
+        // For Rust/WASM: window.JSRust('openCaptcha') or window.JSRust('closeCaptcha')
+        window.JSRust = JSRust;
+        window.openCaptcha = openCaptcha;
+        window.closeCaptcha = closeCaptcha;
+    </script>
+    <!-- End hCaptcha integration -->
 </body>
 
 </html>
