@@ -91,13 +91,15 @@ impl eframe::App for TemplateApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             // --- Logo image loading and display using egui_extras loader system ---
             let logo_url = "https://kbve.com/assets/images/brand/letter_logo.png";
+            let language = self.db.get_language().to_lowercase();
+            let logo_link = format!("https://kbve.com/application/{}/", language);
             let image_response = ui.add(
                 egui::Image::new(logo_url)
                     .fit_to_exact_size(egui::Vec2::new(150.0, 50.0))
                     .sense(egui::Sense::click())
             );
             if image_response.clicked() {
-                ctx.open_url(egui::OpenUrl::new_tab("https://kbve.com/application/rust/"));
+                ctx.open_url(egui::OpenUrl::new_tab(&logo_link));
             }
             ui.separator();
             ui.heading("Filtered Repositories");
