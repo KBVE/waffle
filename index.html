@@ -1,11 +1,14 @@
 <!DOCTYPE html>
 <html>
-<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
 
-<!-- Disable zooming: -->
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <!-- Disable zooming: -->
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0, user-scalable=no"
+  />
 
-<head>
+  <head>
     <!-- change this to your project name -->
     <title>Waffle - Template</title>
 
@@ -14,189 +17,298 @@
     <!-- this is the base url relative to which other urls will be constructed. trunk will insert this from the public-url option -->
     <base data-trunk-public-url />
 
-    <link data-trunk rel="icon" href="assets/favicon.ico">
+    <link data-trunk rel="icon" href="assets/favicon.ico" />
 
+    <!-- Worker -> SupaBase -->
 
-    <link data-trunk rel="copy-file" href="assets/sw.js"/>
-    <link data-trunk rel="copy-file" href="assets/manifest.json"/>
-    <link data-trunk rel="copy-file" href="assets/icon-1024.png" data-target-path="assets"/>
-    <link data-trunk rel="copy-file" href="assets/icon-256.png" data-target-path="assets"/>
-    <link data-trunk rel="copy-file" href="assets/icon_ios_touch_192.png" data-target-path="assets"/>
-    <link data-trunk rel="copy-file" href="assets/maskable_icon_x512.png" data-target-path="assets"/>
+    <script type="module">
+      import createWorker from "https://esm.sh/@supabase/supabase-js?worker";
 
+      // Create the worker
+      const supabaseWorker = createWorker({
+        name: "supabase-auth-worker",
+        inject: `
+        const supabase =  $module.createClient("https://qmpdruitzlownnnnjmpk.supabase.co", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFtcGRydWl0emxvd25ubm5qbXBrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk2NjA0NTYsImV4cCI6MjA2NTIzNjQ1Nn0.OhD3qN4dq0TMA65qVGvry_QsZEeLKK7RbwYP3QzAvcY");
+        self.onmessage = async (e) => {
+            const { id, action, payload } = e.data;
+            if (action === "signup") {
+            try {
+                const { data, error } = await supabase.auth.signUp(payload);
+                self.postMessage({ id, success: !error, data, error });
+            } catch (err) {
+                self.postMessage({ id, success: false, error: err.message });
+            }
+            }
+        };
+        
+        `,
+      });
 
-    <link rel="manifest" href="manifest.json">
-    <link rel="apple-touch-icon" href="assets/icon_ios_touch_192.png">
-    <meta name="theme-color" media="(prefers-color-scheme: light)" content="white">
-    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#404040">
+      // Simple request-response ID system
+      let requestCounter = 0;
+      const pending = new Map();
+
+      supabaseWorker.onmessage = (e) => {
+        const { id, success, data, error } = e.data;
+        const callback = pending.get(id);
+        if (callback) {
+          callback({ success, data, error });
+          pending.delete(id);
+        }
+      };
+
+      // Define the global supabase proxy
+      window.supabase = {
+        signup: (email, password) => {
+          return new Promise((resolve) => {
+            const id = `req_${++requestCounter}`;
+            pending.set(id, resolve);
+            supabaseWorker.postMessage({
+              id,
+              action: "signup",
+              payload: { email, password },
+            });
+          });
+        },
+      };
+    </script>
+
+    <link data-trunk rel="copy-file" href="assets/sw.js" />
+    <link data-trunk rel="copy-file" href="assets/manifest.json" />
+    <link
+      data-trunk
+      rel="copy-file"
+      href="assets/icon-1024.png"
+      data-target-path="assets"
+    />
+    <link
+      data-trunk
+      rel="copy-file"
+      href="assets/icon-256.png"
+      data-target-path="assets"
+    />
+    <link
+      data-trunk
+      rel="copy-file"
+      href="assets/icon_ios_touch_192.png"
+      data-target-path="assets"
+    />
+    <link
+      data-trunk
+      rel="copy-file"
+      href="assets/maskable_icon_x512.png"
+      data-target-path="assets"
+    />
+
+    <link rel="manifest" href="manifest.json" />
+    <link rel="apple-touch-icon" href="assets/icon_ios_touch_192.png" />
+    <meta
+      name="theme-color"
+      media="(prefers-color-scheme: light)"
+      content="white"
+    />
+    <meta
+      name="theme-color"
+      media="(prefers-color-scheme: dark)"
+      content="#404040"
+    />
 
     <style>
-        html {
-            /* Remove touch delay: */
-            touch-action: manipulation;
-        }
+      html {
+        /* Remove touch delay: */
+        touch-action: manipulation;
+      }
 
-        body {
-            /* Light mode background color for what is not covered by the egui canvas,
+      body {
+        /* Light mode background color for what is not covered by the egui canvas,
             or where the egui canvas is translucent. */
-            background: #909090;
-        }
+        background: #909090;
+      }
 
-        @media (prefers-color-scheme: dark) {
-            body {
-                /* Dark mode background color for what is not covered by the egui canvas,
-                or where the egui canvas is translucent. */
-                background: #404040;
-            }
-        }
-
-        /* Allow canvas to fill entire web page: */
-        html,
+      @media (prefers-color-scheme: dark) {
         body {
-            overflow: hidden;
-            margin: 0 !important;
-            padding: 0 !important;
-            height: 100%;
-            width: 100%;
+          /* Dark mode background color for what is not covered by the egui canvas,
+                or where the egui canvas is translucent. */
+          background: #404040;
+        }
+      }
+
+      /* Allow canvas to fill entire web page: */
+      html,
+      body {
+        overflow: hidden;
+        margin: 0 !important;
+        padding: 0 !important;
+        height: 100%;
+        width: 100%;
+      }
+
+      /* Make canvas fill entire document: */
+      canvas {
+        margin-right: auto;
+        margin-left: auto;
+        display: block;
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+      }
+
+      .centered {
+        margin-right: auto;
+        margin-left: auto;
+        display: block;
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        color: #f0f0f0;
+        font-size: 24px;
+        font-family: Ubuntu-Light, Helvetica, sans-serif;
+        text-align: center;
+      }
+
+      /* ---------------------------------------------- */
+      /* Loading animation from https://loading.io/css/ */
+      .lds-dual-ring {
+        display: inline-block;
+        width: 24px;
+        height: 24px;
+      }
+
+      .lds-dual-ring:after {
+        content: " ";
+        display: block;
+        width: 24px;
+        height: 24px;
+        margin: 0px;
+        border-radius: 50%;
+        border: 3px solid #fff;
+        border-color: #fff transparent #fff transparent;
+        animation: lds-dual-ring 1.2s linear infinite;
+      }
+
+      @keyframes lds-dual-ring {
+        0% {
+          transform: rotate(0deg);
         }
 
-        /* Make canvas fill entire document: */
-        canvas {
-            margin-right: auto;
-            margin-left: auto;
-            display: block;
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
+        100% {
+          transform: rotate(360deg);
         }
-
-        .centered {
-            margin-right: auto;
-            margin-left: auto;
-            display: block;
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            color: #f0f0f0;
-            font-size: 24px;
-            font-family: Ubuntu-Light, Helvetica, sans-serif;
-            text-align: center;
-        }
-
-        /* ---------------------------------------------- */
-        /* Loading animation from https://loading.io/css/ */
-        .lds-dual-ring {
-            display: inline-block;
-            width: 24px;
-            height: 24px;
-        }
-
-        .lds-dual-ring:after {
-            content: " ";
-            display: block;
-            width: 24px;
-            height: 24px;
-            margin: 0px;
-            border-radius: 50%;
-            border: 3px solid #fff;
-            border-color: #fff transparent #fff transparent;
-            animation: lds-dual-ring 1.2s linear infinite;
-        }
-
-        @keyframes lds-dual-ring {
-            0% {
-                transform: rotate(0deg);
-            }
-
-            100% {
-                transform: rotate(360deg);
-            }
-        }
+      }
     </style>
-</head>
+  </head>
 
-<body>
+  <body>
     <!-- The WASM code will resize the canvas dynamically -->
     <!-- the id is hardcoded in main.rs . so, make sure both match. -->
     <canvas id="the_canvas_id"></canvas>
 
     <!-- the loading spinner will be removed in main.rs -->
     <div class="centered" id="loading_text">
-        <p style="font-size:16px">
-            Loading…
-        </p>
-        <div class="lds-dual-ring"></div>
+      <p style="font-size: 16px">Loading…</p>
+      <div class="lds-dual-ring"></div>
     </div>
 
     <!--Register Service Worker. this will cache the wasm / js scripts for offline use (for PWA functionality). -->
     <!-- Force refresh (Ctrl + F5) to load the latest files instead of cached files  -->
     <script>
-        // We disable caching during development so that we always view the latest version.
-        if ('serviceWorker' in navigator && window.location.hash !== "#dev") {
-            window.addEventListener('load', function () {
-                navigator.serviceWorker.register('sw.js');
-            });
-        }
+      // We disable caching during development so that we always view the latest version.
+      if ("serviceWorker" in navigator && window.location.hash !== "#dev") {
+        window.addEventListener("load", function () {
+          navigator.serviceWorker.register("sw.js");
+        });
+      }
     </script>
 
     <!-- hCaptcha widget integration -->
     <script src="https://js.hcaptcha.com/1/api.js" async defer></script>
     <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
 
-    <div id="captcha-container" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.7); z-index:9999; align-items:center; justify-content:center;">
-        <div style="background:#222; padding:32px; border-radius:12px; display:inline-block;">
-            <div id="hcaptcha-widget" class="h-captcha" data-sitekey="e19cf4a6-2168-49a2-88fe-716e97569e88" data-callback="onHCaptchaSuccess"></div>
-            <button onclick="closeCaptcha()" style="margin-top:16px;" class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded shadow transition-colors duration-150">Cancel</button>
-        </div>
+    <div
+      id="captcha-container"
+      style="
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background: rgba(0, 0, 0, 0.7);
+        z-index: 9999;
+        align-items: center;
+        justify-content: center;
+      "
+    >
+      <div
+        style="
+          background: #222;
+          padding: 32px;
+          border-radius: 12px;
+          display: inline-block;
+        "
+      >
+        <div
+          id="hcaptcha-widget"
+          class="h-captcha"
+          data-sitekey="e19cf4a6-2168-49a2-88fe-716e97569e88"
+          data-callback="onHCaptchaSuccess"
+        ></div>
+        <button
+          onclick="closeCaptcha()"
+          style="margin-top: 16px"
+          class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded shadow transition-colors duration-150"
+        >
+          Cancel
+        </button>
+      </div>
     </div>
     <script>
-        // Show/hide captcha overlay via a single JS entrypoint for Rust/WASM
-        function openCaptcha() {
-            document.getElementById('captcha-container').style.display = 'flex';
-        }
-        function closeCaptcha() {
-            document.getElementById('captcha-container').style.display = 'none';
-        }
-        // Unified JS entrypoint for Rust/WASM with action/message
-        function JSRust(action, message) {
-            switch(action) {
-                case 'openCaptcha':
-                    openCaptcha();
-                    break;
-                case 'closeCaptcha':
-                    closeCaptcha();
-                    break;
-                case 'log':
-                    if (message) {
-                        console.log('[JSRust]', message);
-                    }
-                    break;
-                // Add more actions as needed
-                default:
-                    console.warn('[JSRust] Unknown action:', action, message);
+      // Show/hide captcha overlay via a single JS entrypoint for Rust/WASM
+      function openCaptcha() {
+        document.getElementById("captcha-container").style.display = "flex";
+      }
+      function closeCaptcha() {
+        document.getElementById("captcha-container").style.display = "none";
+      }
+      // Unified JS entrypoint for Rust/WASM with action/message
+      function JSRust(action, message) {
+        switch (action) {
+          case "openCaptcha":
+            openCaptcha();
+            break;
+          case "closeCaptcha":
+            closeCaptcha();
+            break;
+          case "log":
+            if (message) {
+              console.log("[JSRust]", message);
             }
+            break;
+          // Add more actions as needed
+          default:
+            console.warn("[JSRust] Unknown action:", action, message);
         }
-        // Called by hCaptcha when solved
-        function onHCaptchaSuccess(token) {
-            JSRust('closeCaptcha');
-            if (window.wasmBindings && window.wasmBindings.pass_captcha_token) {
-                window.wasmBindings.pass_captcha_token(token);
-            } else if (window.pass_captcha_token) {
-                console.log('[KBVE]: Warning binding is not set!');
-                window.pass_captcha_token(token);
-            }
+      }
+      // Called by hCaptcha when solved
+      function onHCaptchaSuccess(token) {
+        JSRust("closeCaptcha");
+        if (window.wasmBindings && window.wasmBindings.pass_captcha_token) {
+          window.wasmBindings.pass_captcha_token(token);
+        } else if (window.pass_captcha_token) {
+          console.log("[KBVE]: Warning binding is not set!");
+          window.pass_captcha_token(token);
         }
-        // For Rust/WASM: window.JSRust('openCaptcha') or window.JSRust('closeCaptcha')
-        window.JSRust = JSRust;
-        window.openCaptcha = openCaptcha;
-        window.closeCaptcha = closeCaptcha;
+      }
+      // For Rust/WASM: window.JSRust('openCaptcha') or window.JSRust('closeCaptcha')
+      window.JSRust = JSRust;
+      window.openCaptcha = openCaptcha;
+      window.closeCaptcha = closeCaptcha;
     </script>
     <!-- End hCaptcha integration -->
-</body>
-
+  </body>
 </html>
 
 <!-- Powered by egui: https://github.com/emilk/egui/ -->
