@@ -107,12 +107,44 @@ impl AuthWidget {
             } else if self.password != self.confirm_password {
                 self.error = Some("Passwords do not match".to_string());
             } else {
-                let _token = hcaptcha::take_captcha_token();
-                self.error = Some("(Stub) Would call Supabase register here".to_string());
+                let token = hcaptcha::take_captcha_token();
+                if let Some(token) = token {
+                    let email = self.email.clone();
+                    let password = self.password.clone();
+                    let error_ptr = std::rc::Rc::new(std::cell::RefCell::new(None));
+                    let error_ptr_clone = error_ptr.clone();
+                    let ctx = ui.ctx().clone();
+                    // Show spinner while processing
+                    self.error = Some("Processing registration...".to_string());
+                    wasm_bindgen_futures::spawn_local(async move {
+                        let resp = crate::erust::uiux::supabase::register(&email, &password, &token).await;
+                        let resp_json: serde_json::Value = serde_json::from_str(&resp).unwrap_or_default();
+                        let success = resp_json.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+                        let error = resp_json.get("error").and_then(|v| v.as_str()).map(|s| s.to_string());
+                        ctx.request_repaint();
+                        let mut err_mut = error_ptr_clone.borrow_mut();
+                        if success {
+                            *err_mut = Some("Registration successful!".to_string());
+                        } else {
+                            *err_mut = Some(error.unwrap_or_else(|| "Registration failed".to_string()));
+                        }
+                    });
+                    self.error = error_ptr.borrow().clone();
+                } else {
+                    self.error = Some("Captcha token missing".to_string());
+                }
             }
         }
+        // Show spinner if processing
         if let Some(err) = &self.error {
-            ui.colored_label(egui::Color32::RED, err);
+            if err == "Processing registration..." {
+                ui.horizontal(|ui| {
+                    ui.label("Processing registration...");
+                    ui.add(egui::Spinner::default());
+                });
+            } else {
+                ui.colored_label(egui::Color32::RED, err);
+            }
         }
         ui.horizontal(|ui| {
             if ui.button("Back to Login").clicked() {

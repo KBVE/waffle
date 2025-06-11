@@ -25,7 +25,7 @@
      -->
 
     <script type="module">
-      import createWorker from "https://esm.sh/@supabase/supabase-js?worker";
+      import createWorker from "https:f//esm.sh/@supabase/supabase-js?worker";
 
       // Create the worker
       const supabaseWorker = createWorker({
@@ -36,92 +36,106 @@
         "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFtcGRydWl0emxvd25ubm5qbXBrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk2NjA0NTYsImV4cCI6MjA2NTIzNjQ1Nn0.OhD3qN4dq0TMA65qVGvry_QsZEeLKK7RbwYP3QzAvcY"
         );
 
-        self.onmessage = async (e) => {
+      self.onmessage = async (e) => {
         const { id, action, payload } = e.data;
 
         try {
-            let result;
+          let result;
 
-            switch (action) {
+          switch (action) {
             case "signup":
-                result = await supabase.auth.signUp(payload);
-                break;
+              result = await supabase.auth.signUp({
+                email: payload.email,
+                password: payload.password,
+                options: { captchaToken: payload.captchaToken }
+              });
+              break;
 
             case "login":
-                result = await supabase.auth.signInWithPassword(payload);
-                break;
+              result = await supabase.auth.signInWithPassword({
+                email: payload.email,
+                password: payload.password,
+                options: { captchaToken: payload.captchaToken }
+              });
+              break;
 
             case "logout":
-                result = await supabase.auth.signOut();
-                break;
+              result = await supabase.auth.signOut();
+              break;
 
             case "session":
-                result = await supabase.auth.getSession();
-                break;
+              result = await supabase.auth.getSession();
+              break;
 
             case "getUser":
-                result = await supabase.auth.getUser();
-                break;
+              result = await supabase.auth.getUser();
+              break;
 
             case "getProfile":
-                const { data, error } = await supabase
+              const { data, error } = await supabase
                 .from("user_profiles")
                 .select("*")
                 .eq("id", payload.user_id)
                 .single();
-                result = { data, error };
-                break;
+              result = { data, error };
+              break;
 
             default:
-                throw new Error(\`Unknown action: \${action}\`);
-            }
+              throw new Error(\`Unknown action: \${action}\`);
+          }
 
-            self.postMessage({
+          self.postMessage({
             id,
             success: !result.error,
             data: result.data,
             error: result.error?.message || null
-            });
+          });
 
         } catch (err) {
-            self.postMessage({
+          self.postMessage({
             id,
             success: false,
             error: err.message || "Unexpected error"
-            });
-        }
-        };
-  `,
-      });
-
-      window.supabase = {
-        signup: (email, password) =>
-          sendToWorker("signup", { email, password }),
-        login: (email, password) => sendToWorker("login", { email, password }),
-        logout: () => sendToWorker("logout", {}),
-        session: () => sendToWorker("session", {}),
-        getUser: () => sendToWorker("getUser", {}),
-        getProfile: (user_id) => sendToWorker("getProfile", { user_id }),
-      };
-
-      let counter = 0;
-      const pending = new Map();
-
-      function sendToWorker(action, payload) {
-        return new Promise((resolve) => {
-          const id = `req_${++counter}`;
-          pending.set(id, resolve);
-          supabaseWorker.postMessage({ id, action, payload });
-        });
-      }
-
-      supabaseWorker.onmessage = (e) => {
-        const { id, success, data, error } = e.data;
-        if (pending.has(id)) {
-          pending.get(id)({ success, data, error });
-          pending.delete(id);
+          });
         }
       };
+    `,
+  });
+
+  let counter = 0;
+  const pending = new Map();
+
+  function sendToWorker(action, payload) {
+    return new Promise((resolve) => {
+      const id = `req_${++counter}`;
+      pending.set(id, resolve);
+      supabaseWorker.postMessage({ id, action, payload });
+    });
+  }
+
+  supabaseWorker.onmessage = (e) => {
+    const { id, success, data, error } = e.data;
+    if (pending.has(id)) {
+      pending.get(id)({ success, data, error });
+      pending.delete(id);
+    }
+  };
+
+  window.supabase = {
+    signup: (email, password, captchaToken) =>
+      sendToWorker("signup", { email, password, captchaToken }),
+
+    login: (email, password, captchaToken) =>
+      sendToWorker("login", { email, password, captchaToken }),
+
+    logout: () => sendToWorker("logout", {}),
+
+    session: () => sendToWorker("session", {}),
+
+    getUser: () => sendToWorker("getUser", {}),
+
+    getProfile: (user_id) => sendToWorker("getProfile", { user_id }),
+  };
     </script>
 
     <link data-trunk rel="copy-file" href="assets/sw.js" />
