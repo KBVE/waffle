@@ -77,6 +77,7 @@ impl eframe::App for TemplateApp {
                 let selected = self.db.get_language() == lang;
                 if ui.radio(selected, lang).clicked() {
                     self.db.set_language(lang);
+                    self.db.load_from_indexeddb();
                 }
             }
             ui.separator();
