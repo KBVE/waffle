@@ -182,9 +182,10 @@
         // Called by hCaptcha when solved
         function onHCaptchaSuccess(token) {
             JSRust('closeCaptcha');
-            if (window.wasm_bindgen && window.wasm_bindgen.pass_captcha_token) {
-                window.wasm_bindgen.pass_captcha_token(token);
+            if (window.wasmBindings && window.wasmBindings.pass_captcha_token) {
+                window.wasmBindings.pass_captcha_token(token);
             } else if (window.pass_captcha_token) {
+                console.log('[KBVE]: Warning binding is not set!');
                 window.pass_captcha_token(token);
             }
         }

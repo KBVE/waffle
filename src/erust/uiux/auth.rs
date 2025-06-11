@@ -51,9 +51,11 @@ impl AuthWidget {
         if ui.button("Solve Captcha").clicked() {
             hcaptcha::open_captcha();
         }
-        // Always show the captcha status message
-        if hcaptcha::get_captcha_token().is_some() {
-            ui.colored_label(egui::Color32::GREEN, "Captcha Solved: Token Set");
+        // Always show the captcha status message, and force a repaint if token is set
+        // Debug: Show the actual token if present (for troubleshooting only)
+        if let Some(token) = hcaptcha::get_captcha_token() {
+            ui.colored_label(egui::Color32::GREEN, format!("Captcha Solved: Token Set\nToken: {}", token));
+            ui.ctx().request_repaint();
         } else {
             ui.label("Captcha required");
         }
@@ -91,9 +93,11 @@ impl AuthWidget {
         if ui.button("Solve Captcha").clicked() {
             hcaptcha::open_captcha();
         }
-        // Always show the captcha status message
-        if hcaptcha::get_captcha_token().is_some() {
-            ui.colored_label(egui::Color32::GREEN, "Captcha Solved: Token Set");
+        // Always show the captcha status message, and force a repaint if token is set
+        // Debug: Show the actual token if present (for troubleshooting only)
+        if let Some(token) = hcaptcha::get_captcha_token() {
+            ui.colored_label(egui::Color32::GREEN, format!("Captcha Solved: Token Set\nToken: {}", token));
+            ui.ctx().request_repaint();
         } else {
             ui.label("Captcha required");
         }

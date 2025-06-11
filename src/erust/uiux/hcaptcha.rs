@@ -9,8 +9,8 @@ thread_local! {
 }
 
 #[wasm_bindgen]
-pub fn pass_captcha_token(token: String) {
-    LAST_TOKEN.with(|t| t.replace(Some(token)));
+pub fn pass_captcha_token(token: &str) {
+    LAST_TOKEN.with(|t| t.replace(Some(token.to_string())));
 }
 
 pub fn get_captcha_token() -> Option<String> {
