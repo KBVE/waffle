@@ -157,7 +157,6 @@ impl GithubDb {
         let error = Arc::clone(&self.error);
         let is_loading = Arc::clone(&self.is_loading);
         let language = self.get_language();
-        let key = format!("latest_{}", language.to_lowercase());
         *is_loading.lock().unwrap() = true;
         let request = ehttp::Request {
             method: String::from("GET"),
@@ -181,13 +180,16 @@ impl GithubDb {
                                     .collect::<Vec<_>>();
                                 let filtered_repos_for_mutex = filtered_repos.clone();
                                 let filtered_repos_for_async = filtered_repos_for_mutex.clone();
-                                let key = key.clone();
                                 *repos.lock().unwrap() = filtered_repos_for_mutex;
                                 wasm_bindgen_futures::spawn_local(async move {
                                     match idb::open_waffle_db_with_languages(&[&language]).await {
                                         Ok(db) => {
-                                            if let Err(e) = idb::add_repo(&db, &language, &key, &filtered_repos_for_async).await {
-                                                *error.lock().unwrap() = Some(format!("Failed to store in IndexedDB: {}", e));
+                                            // Store each repo individually
+                                            for repo in &filtered_repos_for_async {
+                                                let key = repo.full_name.clone().unwrap_or_else(|| repo.id.map(|id| id.to_string()).unwrap_or_else(|| "unknown".to_string()));
+                                                if let Err(e) = idb::add_repo(&db, &language, &key, repo).await {
+                                                    *error.lock().unwrap() = Some(format!("Failed to store repo {} in IndexedDB: {}", key, e));
+                                                }
                                             }
                                         }
                                         Err(e) => {
