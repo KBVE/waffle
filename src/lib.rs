@@ -5,3 +5,4 @@ mod db;
 pub use app::TemplateApp;
 pub use db::*;
 pub mod utility;
+pub mod erust;

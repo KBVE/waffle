@@ -3,15 +3,10 @@ use crate::utility::show_loading_spinner_custom;
 use egui::Id;
 use crate::db::github::{GithubDb, Repository};
 use crate::db::idb::LANGUAGES;
+use crate::erust::uiux::search::SearchWidget;
+use crate::erust::state::AppState;
 
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone, PartialEq, Eq)]
-pub enum AppState {
-    Init,
-    Normal,
-    Empty,
-}
-
-#[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
 pub enum LoadingState {
     Idle,
     Loading {
@@ -61,6 +56,8 @@ pub struct TemplateApp {
     filtered_repos: Option<Vec<Repository>>,
     #[serde(skip)]
     filter_loading: bool,
+    #[serde(skip)]
+    search_widget: Option<SearchWidget>,
 }
 
 impl Default for TemplateApp {
@@ -79,6 +76,7 @@ impl Default for TemplateApp {
             pending_app_state: None,
             filtered_repos: None,
             filter_loading: false,
+            search_widget: Some(SearchWidget::new()),
         }
     }
 }
@@ -141,17 +139,10 @@ impl TemplateApp {
     pub fn filter_repos_async(&mut self, query: &str, ctx: &egui::Context) {
         self.filter_loading = true;
         self.filtered_repos = None;
-        let query = query.to_string();
-        let language = self.db.get_language();
-        let ctx = ctx.clone(); // keep this, as it is used in the async block
-        wasm_bindgen_futures::spawn_local(async move {
-            let result = match crate::db::idb::open_waffle_db().await {
-                Ok(db_conn) => crate::db::idb::filter_repos_in_idb::<Repository>(&db_conn, &language, &query).await.unwrap_or_default(),
-                Err(_) => vec![],
-            };
-            ctx.data_mut(|d| d.insert_temp(Id::new("waffle_filtered_repos"), result));
-            ctx.request_repaint();
-        });
+        if let Some(widget) = &mut self.search_widget {
+            widget.query = query.to_string();
+            widget.search(&self.db.get_language(), ctx);
+        }
     }
 
     pub fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -338,14 +329,14 @@ impl TemplateApp {
         });
 
         // Update filtered_repos from egui context temp data if available
-        if let Some(repos) = ctx.data(|d| d.get_temp::<Vec<Repository>>(Id::new("waffle_filtered_repos"))) {
-            let is_empty = repos.is_empty();
-            self.filtered_repos = Some(repos.clone());
-            // Set app_state based on whether there is data
-            if is_empty {
-                self.app_state = AppState::Empty;
-            } else {
+        if let Some(widget) = &mut self.search_widget {
+            widget.update_results_from_ctx(ctx);
+            if !widget.results.is_empty() {
+                self.filtered_repos = Some(widget.results.clone());
                 self.app_state = AppState::Normal;
+            } else {
+                self.filtered_repos = Some(vec![]);
+                self.app_state = AppState::Empty;
             }
         }
 
