@@ -1,3 +1,6 @@
+// Use the utility module from crate root
+use crate::utility::show_loading_spinner;
+use egui::Id;
 use crate::db::github::{GithubDb, Repository};
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
@@ -14,6 +17,17 @@ pub struct TemplateApp {
     logo_texture: Option<egui::TextureHandle>,
     #[serde(skip)]
     logo_loaded: bool,
+    // Loading and toast state
+    #[serde(skip)]
+    is_loading: bool,
+    #[serde(skip)]
+    loading_message: String,
+    #[serde(skip)]
+    toast_message: Option<String>,
+    #[serde(skip)]
+    toast_timer: f32,
+    #[serde(skip)]
+    loading_timer: f32,
 }
 
 impl Default for TemplateApp {
@@ -25,6 +39,11 @@ impl Default for TemplateApp {
             db: GithubDb::new(),
             logo_texture: None,
             logo_loaded: false,
+            is_loading: false,
+            loading_message: String::new(),
+            toast_message: None,
+            toast_timer: 0.0,
+            loading_timer: 0.0,
         }
     }
 }
@@ -57,6 +76,36 @@ impl TemplateApp {
             .cloned()
             .collect()
     }
+
+    fn show_toast(&mut self, _ctx: &egui::Context, ui: &mut egui::Ui) {
+        if let Some(msg) = &self.toast_message {
+            let toast_height = 32.0;
+            let toast_width = 300.0;
+            let rect = egui::Rect::from_min_size(
+                ui.max_rect().center_top() + egui::vec2(-toast_width / 2.0, 0.0),
+                egui::vec2(toast_width, toast_height),
+            );
+            let painter = ui.painter();
+            painter.rect_filled(rect, 8.0, egui::Color32::from_rgba_unmultiplied(30, 144, 255, 220));
+            painter.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                msg,
+                egui::TextStyle::Button.resolve(ui.style()),
+                egui::Color32::WHITE,
+            );
+        }
+    }
+
+    fn trigger_toast(&mut self, message: &str) {
+        self.toast_message = Some(message.to_owned());
+        self.toast_timer = 2.5; // seconds
+    }
+
+    fn update_loading_state(&mut self) {
+        // Use a public getter for is_loading
+        self.is_loading = self.db.is_loading();
+    }
 }
 
 impl eframe::App for TemplateApp {
@@ -67,6 +116,42 @@ impl eframe::App for TemplateApp {
 
     /// Called each time the UI needs repainting, which may be many times per second.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.update_loading_state();
+        // Toast timer logic
+        if let Some(_) = self.toast_message {
+            let dt = ctx.input(|i| i.unstable_dt);
+            self.toast_timer -= dt;
+            if self.toast_timer <= 0.0 {
+                self.toast_message = None;
+            }
+        }
+        // Loading timer logic (for fake spinner)
+        if self.is_loading && self.loading_timer > 0.0 {
+            let dt = ctx.input(|i| i.unstable_dt);
+            self.loading_timer -= dt;
+            if self.loading_timer <= 0.0 {
+                self.is_loading = false;
+                self.loading_timer = 0.0;
+                self.trigger_toast(&self.loading_message.replace("Switching to ", "Switched to ").replace("...", "!"));
+                // Actually switch language and load data here if needed
+            }
+        }
+        // Show loading spinner overlay if loading
+        if self.is_loading {
+            egui::Area::new(Id::new("loading_spinner_overlay"))
+                .fixed_pos((ctx.screen_rect().center().x - 60.0, ctx.screen_rect().center().y - 60.0))
+                .show(ctx, |ui| {
+                    show_loading_spinner(ui, &self.loading_message, None);
+                });
+        }
+        // Show toast if present
+        if self.toast_message.is_some() {
+            egui::Area::new(Id::new("toast_area"))
+                .fixed_pos((ctx.screen_rect().center().x - 150.0, ctx.screen_rect().bottom() - 60.0))
+                .show(ctx, |ui| {
+                    self.show_toast(ctx, ui);
+                });
+        }
         // Define available languages here for easy extensibility
         // To add a new language, just add it to this array
         const LANGUAGE_OPTIONS: &[&str] = &["Rust", "Python", "Javascript"];
@@ -76,15 +161,22 @@ impl eframe::App for TemplateApp {
             for &lang in LANGUAGE_OPTIONS.iter() {
                 let selected = self.db.get_language() == lang;
                 if ui.radio(selected, lang).clicked() {
-                    self.db.set_language(lang);
-                    self.db.load_from_indexeddb();
+                    self.loading_message = format!("Switching to {}...", lang);
+                    self.is_loading = true;
+                    self.loading_timer = 3.0;
+                    // self.db.set_language(lang); // Move this to after loading if you want to delay the switch
+                    // self.db.load_from_indexeddb(); // Move this to after loading if you want to delay the load
                 }
             }
             ui.separator();
             if ui.button("Sync").clicked() {
+                self.loading_message = "Syncing repositories...".to_owned();
+                self.is_loading = true;
                 self.db.sync_and_store();
             }
             if ui.button("Clear Cache").clicked() {
+                self.loading_message = "Clearing cache...".to_owned();
+                self.is_loading = true;
                 self.db.clear_indexeddb();
             }
             ui.separator();
@@ -129,5 +221,17 @@ impl eframe::App for TemplateApp {
                 }
             }
         });
+
+        // Update and show loading state
+        self.update_loading_state();
+        if self.is_loading {
+            let _response = ctx.screen_rect();
+            // Remove all ctx.layer_painter() usages and related painter code from update and overlays
+            // Only use egui::Area and Ui for overlays and drawing
+        }
+
+        // Remove this line, it is invalid and causes errors:
+        // self.show_toast(ctx, &mut ctx.layer_painter());
+        // The toast is already shown via egui::Area above.
     }
 }
