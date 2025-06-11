@@ -25,12 +25,13 @@
      -->
 
     <script type="module">
-      import createWorker from "https:f//esm.sh/@supabase/supabase-js?worker";
+      import createWorker from "https://esm.sh/@supabase/supabase-js?worker";
 
       // Create the worker
-      const supabaseWorker = createWorker({
-        name: "supabase-worker",
-        inject: `
+      (async () => {
+        const supabaseWorker = await createWorker({
+          name: "supabase-worker",
+          inject: `
         const supabase = $module.createClient(
         "https://qmpdruitzlownnnnjmpk.supabase.co",
         "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFtcGRydWl0emxvd25ubm5qbXBrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk2NjA0NTYsImV4cCI6MjA2NTIzNjQ1Nn0.OhD3qN4dq0TMA65qVGvry_QsZEeLKK7RbwYP3QzAvcY"
@@ -49,6 +50,7 @@
                 password: payload.password,
                 options: { captchaToken: payload.captchaToken }
               });
+              console.log("[Worker] Signup result:", result);
               break;
 
             case "login":
@@ -100,42 +102,41 @@
         }
       };
     `,
-  });
+        });
 
-  let counter = 0;
-  const pending = new Map();
+        const pending = new Map();
+        let counter = 0;
 
-  function sendToWorker(action, payload) {
-    return new Promise((resolve) => {
-      const id = `req_${++counter}`;
-      pending.set(id, resolve);
-      supabaseWorker.postMessage({ id, action, payload });
-    });
-  }
+        function sendToWorker(action, payload) {
+          return new Promise((resolve) => {
+            const id = `req_${++counter}`;
+            console.log(`[Worker]: Handling ${id}`);
+            pending.set(id, resolve);
+            supabaseWorker.postMessage({ id, action, payload });
+          });
+        }
 
-  supabaseWorker.onmessage = (e) => {
-    const { id, success, data, error } = e.data;
-    if (pending.has(id)) {
-      pending.get(id)({ success, data, error });
-      pending.delete(id);
-    }
-  };
+        supabaseWorker.onmessage = (e) => {
+          const { id, success, data, error } = e.data;
+          if (pending.has(id)) {
+            pending.get(id)({ success, data, error });
+            pending.delete(id);
+          }
+        };
 
-  window.supabase = {
-    signup: (email, password, captchaToken) =>
-      sendToWorker("signup", { email, password, captchaToken }),
+        window.supabase = {
+          signup: (email, password, captchaToken) =>
+            sendToWorker("signup", { email, password, captchaToken }),
+          login: (email, password, captchaToken) =>
+            sendToWorker("login", { email, password, captchaToken }),
+          logout: () => sendToWorker("logout", {}),
+          session: () => sendToWorker("session", {}),
+          getUser: () => sendToWorker("getUser", {}),
+          getProfile: (user_id) => sendToWorker("getProfile", { user_id }),
+        };
 
-    login: (email, password, captchaToken) =>
-      sendToWorker("login", { email, password, captchaToken }),
-
-    logout: () => sendToWorker("logout", {}),
-
-    session: () => sendToWorker("session", {}),
-
-    getUser: () => sendToWorker("getUser", {}),
-
-    getProfile: (user_id) => sendToWorker("getProfile", { user_id }),
-  };
+        console.log("[JS]: Supabase worker initialized and ready.");
+      })();
     </script>
 
     <link data-trunk rel="copy-file" href="assets/sw.js" />
@@ -340,12 +341,78 @@
       }
       // Unified JS entrypoint for Rust/WASM with action/message
       function JSRust(action, message) {
+        // If message is an object, extract action from it (for new interop pattern)
+        if (typeof action === "object" && action !== null) {
+          message = action;
+          action = message.action;
+        }
         switch (action) {
           case "openCaptcha":
             openCaptcha();
             break;
           case "closeCaptcha":
             closeCaptcha();
+            break;
+          case "register":
+            console.log("[DEBUG]: Called Registered Here");
+            if (
+              message &&
+              message.email &&
+              message.password &&
+              message.captcha_token
+            ) {
+              console.log("[DEBUG]: Processing Message", message);
+              const { email, password, captcha_token } = message;
+
+              try {
+                const signupPromise = window.supabase.signup(
+                  email,
+                  password,
+                  captcha_token
+                );
+                console.log("[DEBUG]: Created signupPromise", signupPromise);
+
+                signupPromise
+                  .then((resp) => {
+                    console.debug(
+                      "[DEBUG]: Received Response from Supabase Worker:",
+                      resp
+                    );
+                    if (window.JSRustResponseHandler) {
+                      window.JSRustResponseHandler(resp);
+                    }
+                  })
+                  .catch((err) => {
+                    console.error("[ERROR]: signup call failed", err);
+                  })
+                  .finally(() => {
+                    console.log("[DEBUG]: Finally block executed");
+                  });
+              } catch (err) {
+                console.error("[EXCEPTION]: Threw during signup call", err);
+              }
+            } else {
+              console.warn(
+                "[WARN]: Missing email/password/captcha_token",
+                message
+              );
+            }
+            break;
+          case "login":
+            if (
+              message &&
+              message.email &&
+              message.password &&
+              message.captcha_token
+            ) {
+              window.supabase
+                .login(message.email, message.password, message.captcha_token)
+                .then((resp) => {
+                  if (window.JSRustResponseHandler) {
+                    window.JSRustResponseHandler(resp);
+                  }
+                });
+            }
             break;
           case "log":
             if (message) {
@@ -371,6 +438,20 @@
       window.JSRust = JSRust;
       window.openCaptcha = openCaptcha;
       window.closeCaptcha = closeCaptcha;
+
+      // Set up a default JSRustResponseHandler to forward to WASM if available
+      window.JSRustResponseHandler = function (resp) {
+        if (window.wasmBindings && window.wasmBindings.handle_jsrust_response) {
+          window.wasmBindings.handle_jsrust_response(resp);
+        } else if (window.handle_jsrust_response) {
+          window.handle_jsrust_response(resp);
+        } else {
+          console.log(
+            "[JSRustResponseHandler] Response from JS to Rust:",
+            resp
+          );
+        }
+      };
     </script>
     <!-- End hCaptcha integration -->
   </body>
