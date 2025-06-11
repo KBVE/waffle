@@ -1,9 +1,10 @@
 name: Auto PR from dev* to main for h0lybyte
 
 on:
-  pull_request:
+  push:
     branches:
       - 'dev*'
+  workflow_dispatch:
 
 concurrency:
   group: pr-auto-${{ github.head_ref }}
@@ -13,13 +14,8 @@ jobs:
   auto-pr-to-main:
     runs-on: ubuntu-latest
     if: |
-      github.actor == 'h0lybyte'
+      github.repository == 'KBVE/waffle' && github.actor == 'h0lybyte'
     steps:
-      - name: Check if user is a member of KBVE
-        id: org-check
-        run: |
-          curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            https://api.github.com/orgs/KBVE/members/h0lybyte | grep 'login' || exit 1
       - name: Checkout code
         uses: actions/checkout@v4
       - name: Create PR from dev* to main
@@ -27,4 +23,3 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh pr create --base main --head ${{ github.head_ref }} --title "Auto PR: ${{ github.head_ref }} to main" --body "Automated PR from dev* branch to main by workflow."
-        if: steps.org-check.outcome == 'success'
