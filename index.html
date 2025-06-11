@@ -20,56 +20,107 @@
     <link data-trunk rel="icon" href="assets/favicon.ico" />
 
     <!-- Worker -> SupaBase -->
+    <!-- 
+    Anon Key : eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFtcGRydWl0emxvd25ubm5qbXBrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk2NjA0NTYsImV4cCI6MjA2NTIzNjQ1Nn0.OhD3qN4dq0TMA65qVGvry_QsZEeLKK7RbwYP3QzAvcY
+     -->
 
     <script type="module">
       import createWorker from "https://esm.sh/@supabase/supabase-js?worker";
 
       // Create the worker
       const supabaseWorker = createWorker({
-        name: "supabase-auth-worker",
+        name: "supabase-worker",
         inject: `
-        const supabase =  $module.createClient("https://qmpdruitzlownnnnjmpk.supabase.co", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFtcGRydWl0emxvd25ubm5qbXBrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk2NjA0NTYsImV4cCI6MjA2NTIzNjQ1Nn0.OhD3qN4dq0TMA65qVGvry_QsZEeLKK7RbwYP3QzAvcY");
+        const supabase = $module.createClient(
+        "https://qmpdruitzlownnnnjmpk.supabase.co",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFtcGRydWl0emxvd25ubm5qbXBrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk2NjA0NTYsImV4cCI6MjA2NTIzNjQ1Nn0.OhD3qN4dq0TMA65qVGvry_QsZEeLKK7RbwYP3QzAvcY"
+        );
+
         self.onmessage = async (e) => {
-            const { id, action, payload } = e.data;
-            if (action === "signup") {
-            try {
-                const { data, error } = await supabase.auth.signUp(payload);
-                self.postMessage({ id, success: !error, data, error });
-            } catch (err) {
-                self.postMessage({ id, success: false, error: err.message });
+        const { id, action, payload } = e.data;
+
+        try {
+            let result;
+
+            switch (action) {
+            case "signup":
+                result = await supabase.auth.signUp(payload);
+                break;
+
+            case "login":
+                result = await supabase.auth.signInWithPassword(payload);
+                break;
+
+            case "logout":
+                result = await supabase.auth.signOut();
+                break;
+
+            case "session":
+                result = await supabase.auth.getSession();
+                break;
+
+            case "getUser":
+                result = await supabase.auth.getUser();
+                break;
+
+            case "getProfile":
+                const { data, error } = await supabase
+                .from("user_profiles")
+                .select("*")
+                .eq("id", payload.user_id)
+                .single();
+                result = { data, error };
+                break;
+
+            default:
+                throw new Error(\`Unknown action: \${action}\`);
             }
-            }
+
+            self.postMessage({
+            id,
+            success: !result.error,
+            data: result.data,
+            error: result.error?.message || null
+            });
+
+        } catch (err) {
+            self.postMessage({
+            id,
+            success: false,
+            error: err.message || "Unexpected error"
+            });
+        }
         };
-        
-        `,
+  `,
       });
 
-      // Simple request-response ID system
-      let requestCounter = 0;
+      window.supabase = {
+        signup: (email, password) =>
+          sendToWorker("signup", { email, password }),
+        login: (email, password) => sendToWorker("login", { email, password }),
+        logout: () => sendToWorker("logout", {}),
+        session: () => sendToWorker("session", {}),
+        getUser: () => sendToWorker("getUser", {}),
+        getProfile: (user_id) => sendToWorker("getProfile", { user_id }),
+      };
+
+      let counter = 0;
       const pending = new Map();
+
+      function sendToWorker(action, payload) {
+        return new Promise((resolve) => {
+          const id = `req_${++counter}`;
+          pending.set(id, resolve);
+          supabaseWorker.postMessage({ id, action, payload });
+        });
+      }
 
       supabaseWorker.onmessage = (e) => {
         const { id, success, data, error } = e.data;
-        const callback = pending.get(id);
-        if (callback) {
-          callback({ success, data, error });
+        if (pending.has(id)) {
+          pending.get(id)({ success, data, error });
           pending.delete(id);
         }
-      };
-
-      // Define the global supabase proxy
-      window.supabase = {
-        signup: (email, password) => {
-          return new Promise((resolve) => {
-            const id = `req_${++requestCounter}`;
-            pending.set(id, resolve);
-            supabaseWorker.postMessage({
-              id,
-              action: "signup",
-              payload: { email, password },
-            });
-          });
-        },
       };
     </script>
 
