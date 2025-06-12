@@ -27,6 +27,7 @@
       import createWorker from "https://esm.sh/@supabase/supabase-js?worker";
       import { createClient } from "https://esm.sh/@supabase/supabase-js";
 
+      // Setting up the Supabase Main Thread.
       (async () => {
         window.sb = createClient(
           "https://qmpdruitzlownnnnjmpk.supabase.co",
@@ -56,11 +57,34 @@
             });
 
             let retries = 50;
-            while (!window.supabase?.worker && retries-- > 0) {
+            while (!window.supabase?.getUser && retries-- > 0) {
               await new Promise((r) => setTimeout(r, 100));
             }
 
-            if (window.supabase?.worker) {
+            if (window.supabase?.getUser) {
+              console.log("User Found");
+              //   const __user = window.supabase.getUser();
+              //   __user
+              //     .then((resp) => {
+              //       if (resp?.data.user) {
+              //         console.log(
+              //           "[DEBUG]: User object received",
+              //           resp.data.user
+              //         );
+              //         if (window.JSRustResponseHandler) {
+              //           window.JSRustResponseHandler(resp);
+              //         } else {
+              //           console.log("[DEBUG]: No Bindgenie - Huge problem.");
+              //         }
+              //       } else {
+              //         console.log("[DEBUG]: No user in response", resp);
+              //       }
+              //     })
+              //     .catch((err) => {
+              //       console.error("[ERROR]: Failed to get user", err);
+              //     });
+            } else {
+              console.log("No User Found");
             }
           } else {
             console.log("[Main] Worker not found.");
@@ -416,6 +440,54 @@
           action = message.action;
         }
         switch (action) {
+          case "user": {
+            console.log("[Interop] - Rust Requires User");
+
+            let retries = 50;
+
+            function pollForValidUser() {
+              if (!window.supabase?.getUser) {
+                if (--retries > 0) {
+                  return setTimeout(pollForValidUser, 100);
+                }
+                console.warn("[Interop] - Supabase.getUser not available.");
+                return;
+              }
+
+              window.supabase
+                .getUser()
+                .then((resp) => {
+                  if (resp?.data?.user) {
+                    console.log(
+                      "[DEBUG]:[INTEROP]: User object received",
+                      resp.data.user
+                    );
+
+                    if (window.wasmBindings?.handle_jsrust_response) {
+                      window.wasmBindings.handle_jsrust_response(resp);
+                      
+                    } else {
+                      console.log("[DEBUG]: No Bindgenie - Huge problem.");
+                    }
+                  } else {
+                    if (--retries > 0) {
+                      setTimeout(pollForValidUser, 100);
+                    } else {
+                      console.warn(
+                        "[Interop] - Supabase session not available after retries."
+                      );
+                      console.log("[DEBUG]: No user in response", resp);
+                    }
+                  }
+                })
+                .catch((err) => {
+                  console.error("[ERROR]: Failed to get user", err);
+                });
+            }
+
+            pollForValidUser();
+            break;
+          }
           case "openCaptcha":
             openCaptcha();
             break;
@@ -505,8 +577,9 @@
                     });
                   }
 
-                  if (window.JSRustResponseHandler) {
-                    window.JSRustResponseHandler(resp);
+                  if (window.wasmBindings?.handle_jsrust_response) {
+                    window.wasmBindings.handle_jsrust_response(resp);
+                    resp;
                   }
                 })
                 .catch((err) => {
@@ -572,18 +645,6 @@
       window.closeCaptcha = closeCaptcha;
 
       // Set up a default JSRustResponseHandler to forward to WASM if available
-      window.JSRustResponseHandler = function (resp) {
-        if (window.wasmBindings && window.wasmBindings.handle_jsrust_response) {
-          window.wasmBindings.handle_jsrust_response(resp);
-        } else if (window.handle_jsrust_response) {
-          window.handle_jsrust_response(resp);
-        } else {
-          console.log(
-            "[JSRustResponseHandler] Response from JS to Rust:",
-            resp
-          );
-        }
-      };
 
       function resetCaptcha() {
         if (window.hcaptcha) {

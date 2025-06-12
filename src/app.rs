@@ -110,6 +110,8 @@ impl TemplateApp {
         app.app_state = AppState::Init;
         app.db.load_from_indexeddb();
         app.load_filtered_repos_from_idb(&cc.egui_ctx);
+        // --- Call JSRust to request user info when app is ready ---
+        crate::erust::uiux::javascript_interop::request_user_from_js();
         app
     }
 

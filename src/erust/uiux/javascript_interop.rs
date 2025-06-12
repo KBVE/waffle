@@ -58,6 +58,7 @@ where
         };
 
         // --- Login response handling ---
+        let mut handled = false;
         if let Some(success) = resp_json.get("success").and_then(|v| v.as_bool()) {
             if success {
                 // Try to extract user info from the response
@@ -65,8 +66,8 @@ where
                     if let Some(session) = data.get("session") {
                         if let Some(user) = session.get("user") {
                             if let Ok(user_obj) = serde_json::from_value::<User>(user.clone()) {
-                                // Here you can update your app state with user_obj
                                 log::info!("Login successful! User: {:?}", user_obj);
+                                handled = true;
                                 // Example: callback could update state
                                 // callback(serde_json::to_value(user_obj).unwrap());
                             }
@@ -76,8 +77,23 @@ where
             } else {
                 if let Some(error) = resp_json.get("error") {
                     log::error!("Login failed: {:?}", error);
+                    handled = true;
                 }
             }
+        }
+        // If not handled, log the message using the JSRust -> Log function
+        if !handled {
+            // Try to call the JS log function if available
+            let log_msg = format!("[JSRustInterop] Unhandled message: {:?}", resp_json);
+            let js_log = js_sys::Reflect::get(&js_sys::global(), &JsValue::from_str("JSRust"));
+            if let Ok(js_log_fn) = js_log {
+                if js_log_fn.is_function() {
+                    let func = js_sys::Function::from(js_log_fn);
+                    let _ = func.call2(&JsValue::NULL, &JsValue::from_str("log"), &JsValue::from_str(&log_msg));
+                }
+            }
+            // Also log to Rust console for debugging
+            log::info!("[JSRustInterop] Unhandled message: {:?}", resp_json);
         }
         // Call the user callback for further handling
         callback(resp_json);
@@ -109,6 +125,16 @@ pub fn set_jsrust_response_handler(cb: &js_sys::Function) {
         &JsValue::from_str("JSRustResponseHandler"),
         cb,
     );
+}
+
+/// Call JSRust('user') to request user info from JS and send it to Rust handler
+pub fn request_user_from_js() {
+    if let Ok(jsrust) = js_sys::Reflect::get(&js_sys::global(), &wasm_bindgen::JsValue::from_str("JSRust")) {
+        if jsrust.is_function() {
+            let func = js_sys::Function::from(jsrust);
+            let _ = func.call1(&wasm_bindgen::JsValue::NULL, &wasm_bindgen::JsValue::from_str("user"));
+        }
+    }
 }
 
 // Expand AppState for interop waiting
