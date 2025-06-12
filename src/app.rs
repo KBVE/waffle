@@ -376,6 +376,22 @@ impl TemplateApp {
                     ui.label("Please sync the languages you would like to see.");
                 });
         }
+
+        // --- Always-visible bottom panel with Logout button ---
+        egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                if ui.button("Logout").clicked() {
+                    crate::erust::uiux::javascript_interop::send_action_message(
+                        "logout",
+                        "",
+                        "",
+                        "",
+                    );
+                    self.toast_message = Some("Sent logout request to JS".to_string());
+                }
+                ui.label("Waffle v0.1.0");
+            });
+        });
     }
 }
 

@@ -34,7 +34,12 @@
           inject: `
         const supabase = $module.createClient(
         "https://qmpdruitzlownnnnjmpk.supabase.co",
-        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFtcGRydWl0emxvd25ubm5qbXBrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk2NjA0NTYsImV4cCI6MjA2NTIzNjQ1Nn0.OhD3qN4dq0TMA65qVGvry_QsZEeLKK7RbwYP3QzAvcY"
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFtcGRydWl0emxvd25ubm5qbXBrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk2NjA0NTYsImV4cCI6MjA2NTIzNjQ1Nn0.OhD3qN4dq0TMA65qVGvry_QsZEeLKK7RbwYP3QzAvcY",
+        { auth: {
+              detectSessionInUrl: false,
+              persistSession: false,
+          }
+        }
         );
 
       self.onmessage = async (e) => {
@@ -59,10 +64,13 @@
                 password: payload.password,
                 options: { captchaToken: payload.captchaToken }
               });
+              console.log("[Worker] Login result:", result);
+
               break;
 
             case "logout":
               result = await supabase.auth.signOut();
+              console.log("[Worker] Logout result:", result);
               break;
 
             case "session":
@@ -411,6 +419,19 @@
                   if (window.JSRustResponseHandler) {
                     window.JSRustResponseHandler(resp);
                   }
+                });
+            }
+            break;
+          case "logout":
+            if (window.supabase && window.supabase.logout) {
+              window.supabase.logout()
+                .then((resp) => {
+                  if (window.JSRustResponseHandler) {
+                    window.JSRustResponseHandler(resp);
+                  }
+                })
+                .catch((err) => {
+                  console.error("[ERROR]: logout call failed", err);
                 });
             }
             break;
