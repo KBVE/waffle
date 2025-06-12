@@ -465,7 +465,6 @@
 
                     if (window.wasmBindings?.supabase_user) {
                       window.wasmBindings.supabase_user(resp.data.user);
-                      
                     } else {
                       console.log("[DEBUG]: No Bindgenie - Huge problem.");
                     }
@@ -522,6 +521,17 @@
                     );
                     if (window.JSRustResponseHandler) {
                       window.JSRustResponseHandler(resp);
+                    }
+
+                    if (window.wasmBindings?.supabase_user && resp.data?.user) {
+                      window.wasmBindings.supabase_user(resp.data.user);
+                    } 
+                    
+                    if (
+                      window.wasmBindings?.supabase_user &&
+                      resp.data?.session?.user
+                    ) {
+                      window.wasmBindings.supabase_user(resp.data.session.user);
                     }
                   })
                   .catch((err) => {
@@ -581,6 +591,11 @@
                     window.wasmBindings.handle_jsrust_response(resp);
                     resp;
                   }
+
+                  if (window.wasmBindings?.supabase_user && resp.data?.user) {
+                    window.wasmBindings.supabase_user(resp.data.user);
+                }
+
                 })
                 .catch((err) => {
                   console.error("[ERROR]: Login failed:", err);

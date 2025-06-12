@@ -410,7 +410,9 @@ impl TemplateApp {
                         "",
                         "",
                     );
+                    self.user = User::default(); // Reset user to blank/default
                     self.toast_message = Some("Sent logout request to JS".to_string());
+                    ctx.request_repaint(); // Ensure UI updates
                 }
                 ui.label("Waffle v0.1.0");
             });
