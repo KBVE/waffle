@@ -152,3 +152,19 @@ pub fn request_user_from_js() {
 // self.app_state = AppState::InteropPending("Waiting for JS response...".to_string());
 //
 // In your interop callback, set it back to Normal or Error as appropriate.
+
+#[wasm_bindgen]
+pub fn supabase_session(session: &JsValue) {
+    // You can process the session object here or store it as needed
+    // For now, just log it for debugging
+    log::info!("[JSInterop] Received Supabase session: {:?}", session);
+    // TODO: Store or process session as needed
+}
+
+#[wasm_bindgen]
+pub fn supabase_user(user: &JsValue) {
+    // You can process the user object here or store it as needed
+    // For now, just log it for debugging
+    log::info!("[JSInterop] Received Supabase user: {:?}", user);
+    // TODO: Store or process user as needed
+}
