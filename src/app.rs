@@ -6,6 +6,7 @@ use crate::db::idb::LANGUAGES;
 use crate::erust::uiux::search::SearchWidget;
 use crate::erust::state::{AppState, WaffleState};
 use crate::erust::uiux::auth::AuthWidget;
+use crate::erust::uiux::user::User;
 
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone, PartialEq, Eq)]
 pub enum LoadingState {
@@ -63,6 +64,10 @@ pub struct TemplateApp {
     search_widget: Option<SearchWidget>,
     #[serde(skip)]
     auth_widget: AuthWidget,
+    #[serde(skip)]
+    user: User,
+    #[serde(skip)]
+    show_auth_window: bool, // Track if auth window should be shown
 }
 
 impl Default for TemplateApp {
@@ -84,6 +89,8 @@ impl Default for TemplateApp {
             filter_loading: false,
             search_widget: Some(SearchWidget::new()),
             auth_widget: AuthWidget::new(false),
+            user: User::default(),
+            show_auth_window: false, // Do not show auth window by default
         }
     }
 }
@@ -306,6 +313,17 @@ impl TemplateApp {
                 ui.label("App Log:");
                 ui.label(&self.waffle_state.log);
             }
+            // Add Login/Register buttons if not authenticated
+            if !self.user.is_logged_in() {
+                if ui.button("Login").clicked() {
+                    self.auth_widget.view = crate::erust::uiux::auth::AuthView::Login;
+                    self.show_auth_window = true;
+                }
+                if ui.button("Register").clicked() {
+                    self.auth_widget.view = crate::erust::uiux::auth::AuthView::Register;
+                    self.show_auth_window = true;
+                }
+            }
         });
         egui::CentralPanel::default().show(ctx, |ui| {
             // --- Logo image loading and display using egui_extras loader system ---
@@ -342,15 +360,6 @@ impl TemplateApp {
                 }
             }
         });
-
-        // --- Authentication Widget (Login/Register) ---
-        egui::Window::new("Authentication")
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_TOP, egui::Vec2::new(0.0, 40.0))
-            .show(ctx, |ui| {
-                self.auth_widget.show(ctx, ui);
-            });
 
         // Update filtered_repos from egui context temp data if available
         if let Some(widget) = &mut self.search_widget {
@@ -392,6 +401,19 @@ impl TemplateApp {
                 ui.label("Waffle v0.1.0");
             });
         });
+
+        // --- Authentication Widget (Login/Register) ---
+        // Only show the authentication window if user is not logged in and show_auth_window is true
+        if !self.user.is_logged_in() && self.show_auth_window {
+            egui::Window::new("Authentication")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_TOP, egui::Vec2::new(0.0, 40.0))
+                .open(&mut self.show_auth_window) // Adds the X close button
+                .show(ctx, |ui| {
+                    self.auth_widget.show(ctx, ui);
+                });
+        }
     }
 }
 
