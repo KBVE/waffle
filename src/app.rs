@@ -428,6 +428,14 @@ impl TemplateApp {
                     self.auth_widget.show(ctx, ui);
                 });
         }
+
+        // --- Check for new Supabase user and update state ---
+        if let Some(new_user) = crate::erust::uiux::javascript_interop::take_supabase_user() {
+            if new_user.is_authenticated {
+                self.user = new_user;
+                ctx.request_repaint();
+            }
+        }
     }
 }
 
