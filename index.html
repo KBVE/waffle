@@ -443,12 +443,12 @@
           case "user": {
             console.log("[Interop] - Rust Requires User");
 
-            let retries = 50;
+            let retries = 5;
 
             function pollForValidUser() {
               if (!window.supabase?.getUser) {
                 if (--retries > 0) {
-                  return setTimeout(pollForValidUser, 100);
+                  return setTimeout(pollForValidUser, 1000);
                 }
                 console.warn("[Interop] - Supabase.getUser not available.");
                 return;
