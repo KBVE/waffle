@@ -27,6 +27,7 @@
       import createWorker from "https://esm.sh/@supabase/supabase-js?worker";
       import { createClient } from "https://esm.sh/@supabase/supabase-js";
 
+      // Setting up the Supabase Main Thread.
       (async () => {
         window.sb = createClient(
           "https://qmpdruitzlownnnnjmpk.supabase.co",
@@ -54,12 +55,42 @@
                 refresh_token: session.refresh_token,
               },
             });
+
+            let retries = 50;
+            while (!window.supabase?.getUser && retries-- > 0) {
+              await new Promise((r) => setTimeout(r, 100));
+            }
+
+            if (window.supabase?.getUser) {
+              console.log("User Found");
+              //   const __user = window.supabase.getUser();
+              //   __user
+              //     .then((resp) => {
+              //       if (resp?.data.user) {
+              //         console.log(
+              //           "[DEBUG]: User object received",
+              //           resp.data.user
+              //         );
+              //         if (window.JSRustResponseHandler) {
+              //           window.JSRustResponseHandler(resp);
+              //         } else {
+              //           console.log("[DEBUG]: No Bindgenie - Huge problem.");
+              //         }
+              //       } else {
+              //         console.log("[DEBUG]: No user in response", resp);
+              //       }
+              //     })
+              //     .catch((err) => {
+              //       console.error("[ERROR]: Failed to get user", err);
+              //     });
+            } else {
+              console.log("No User Found");
+            }
           } else {
             console.log("[Main] Worker not found.");
           }
-        }
-        else {
-            console.log("[Main] No session found — user is logged out.");
+        } else {
+          console.log("[Main] No session found — user is logged out.");
         }
       })();
 
@@ -70,7 +101,7 @@
           inject: `
         const supabase = $module.createClient(
         "https://qmpdruitzlownnnnjmpk.supabase.co",
-        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFtcGRydWl0emxvd25ubm5qbXBrIiwicm9zZSI6ImFub24iLCJpYXQiOjE3NDk2NjA0NTYsImV4cCI6MjA2NTIzNjQ1Nn0.OhD3qN4dq0TMA65qVGvry_QsZEeLKK7RbwYP3QzAvcY",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFtcGRydWl0emxvd25ubm5qbXBrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk2NjA0NTYsImV4cCI6MjA2NTIzNjQ1Nn0.OhD3qN4dq0TMA65qVGvry_QsZEeLKK7RbwYP3QzAvcY",
         { 
             auth: {
               detectSessionInUrl: false,
@@ -186,7 +217,7 @@
           session: () => sendToWorker("session", {}),
           getUser: () => sendToWorker("getUser", {}),
           getProfile: (user_id) => sendToWorker("getProfile", { user_id }),
-          setSession: () => sendToWorker("setSession", {session}),
+          setSession: () => sendToWorker("setSession", { session }),
           worker: supabaseWorker,
         };
 
@@ -379,14 +410,14 @@
         ></div>
         <button
           onclick="closeCaptcha()"
-          style="margin-top: 16px; margin-right: 8px;"
+          style="margin-top: 16px; margin-right: 8px"
           class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded shadow transition-colors duration-150"
         >
           Cancel
         </button>
         <button
           onclick="resetCaptcha()"
-          style="margin-top: 16px;"
+          style="margin-top: 16px"
           class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded shadow transition-colors duration-150"
         >
           Reset Captcha
@@ -409,6 +440,53 @@
           action = message.action;
         }
         switch (action) {
+          case "user": {
+            console.log("[Interop] - Rust Requires User");
+
+            let retries = 5;
+
+            function pollForValidUser() {
+              if (!window.supabase?.getUser) {
+                if (--retries > 0) {
+                  return setTimeout(pollForValidUser, 1000);
+                }
+                console.warn("[Interop] - Supabase.getUser not available.");
+                return;
+              }
+
+              window.supabase
+                .getUser()
+                .then((resp) => {
+                  if (resp?.data?.user) {
+                    console.log(
+                      "[DEBUG]:[INTEROP]: User object received",
+                      resp.data.user
+                    );
+
+                    if (window.wasmBindings?.supabase_user) {
+                      window.wasmBindings.supabase_user(resp.data.user);
+                    } else {
+                      console.log("[DEBUG]: No Bindgenie - Huge problem.");
+                    }
+                  } else {
+                    if (--retries > 0) {
+                      setTimeout(pollForValidUser, 100);
+                    } else {
+                      console.warn(
+                        "[Interop] - Supabase session not available after retries."
+                      );
+                      console.log("[DEBUG]: No user in response", resp);
+                    }
+                  }
+                })
+                .catch((err) => {
+                  console.error("[ERROR]: Failed to get user", err);
+                });
+            }
+
+            pollForValidUser();
+            break;
+          }
           case "openCaptcha":
             openCaptcha();
             break;
@@ -443,6 +521,17 @@
                     );
                     if (window.JSRustResponseHandler) {
                       window.JSRustResponseHandler(resp);
+                    }
+
+                    if (window.wasmBindings?.supabase_user && resp.data?.user) {
+                      window.wasmBindings.supabase_user(resp.data.user);
+                    } 
+                    
+                    if (
+                      window.wasmBindings?.supabase_user &&
+                      resp.data?.session?.user
+                    ) {
+                      window.wasmBindings.supabase_user(resp.data.session.user);
                     }
                   })
                   .catch((err) => {
@@ -498,9 +587,15 @@
                     });
                   }
 
-                  if (window.JSRustResponseHandler) {
-                    window.JSRustResponseHandler(resp);
+                  if (window.wasmBindings?.handle_jsrust_response) {
+                    window.wasmBindings.handle_jsrust_response(resp);
+                    resp;
                   }
+
+                  if (window.wasmBindings?.supabase_user && resp.data?.user) {
+                    window.wasmBindings.supabase_user(resp.data.user);
+                }
+
                 })
                 .catch((err) => {
                   console.error("[ERROR]: Login failed:", err);
@@ -565,18 +660,6 @@
       window.closeCaptcha = closeCaptcha;
 
       // Set up a default JSRustResponseHandler to forward to WASM if available
-      window.JSRustResponseHandler = function (resp) {
-        if (window.wasmBindings && window.wasmBindings.handle_jsrust_response) {
-          window.wasmBindings.handle_jsrust_response(resp);
-        } else if (window.handle_jsrust_response) {
-          window.handle_jsrust_response(resp);
-        } else {
-          console.log(
-            "[JSRustResponseHandler] Response from JS to Rust:",
-            resp
-          );
-        }
-      };
 
       function resetCaptcha() {
         if (window.hcaptcha) {

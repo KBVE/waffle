@@ -31,6 +31,14 @@ pub fn send_action_message(action: &str, email: &str, password: &str, captcha_to
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use js_sys::JSON;
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct User {
+    pub id: String,
+    pub email: String,
+    // Add more fields as needed
+}
 
 /// Call this during app initialization to handle JS->Rust responses
 pub fn setup_jsrust_response_handler<F>(mut callback: F)
@@ -48,6 +56,46 @@ where
         } else {
             serde_json::Value::Null
         };
+
+        // --- Login response handling ---
+        let mut handled = false;
+        if let Some(success) = resp_json.get("success").and_then(|v| v.as_bool()) {
+            if success {
+                // Try to extract user info from the response
+                if let Some(data) = resp_json.get("data") {
+                    if let Some(session) = data.get("session") {
+                        if let Some(user) = session.get("user") {
+                            if let Ok(user_obj) = serde_json::from_value::<User>(user.clone()) {
+                                log::info!("Login successful! User: {:?}", user_obj);
+                                handled = true;
+                                // Example: callback could update state
+                                // callback(serde_json::to_value(user_obj).unwrap());
+                            }
+                        }
+                    }
+                }
+            } else {
+                if let Some(error) = resp_json.get("error") {
+                    log::error!("Login failed: {:?}", error);
+                    handled = true;
+                }
+            }
+        }
+        // If not handled, log the message using the JSRust -> Log function
+        if !handled {
+            // Try to call the JS log function if available
+            let log_msg = format!("[JSRustInterop] Unhandled message: {:?}", resp_json);
+            let js_log = js_sys::Reflect::get(&js_sys::global(), &JsValue::from_str("JSRust"));
+            if let Ok(js_log_fn) = js_log {
+                if js_log_fn.is_function() {
+                    let func = js_sys::Function::from(js_log_fn);
+                    let _ = func.call2(&JsValue::NULL, &JsValue::from_str("log"), &JsValue::from_str(&log_msg));
+                }
+            }
+            // Also log to Rust console for debugging
+            log::info!("[JSRustInterop] Unhandled message: {:?}", resp_json);
+        }
+        // Call the user callback for further handling
         callback(resp_json);
     }) as Box<dyn FnMut(JsValue)>);
 
@@ -79,6 +127,16 @@ pub fn set_jsrust_response_handler(cb: &js_sys::Function) {
     );
 }
 
+/// Call JSRust('user') to request user info from JS and send it to Rust handler
+pub fn request_user_from_js() {
+    if let Ok(jsrust) = js_sys::Reflect::get(&js_sys::global(), &wasm_bindgen::JsValue::from_str("JSRust")) {
+        if jsrust.is_function() {
+            let func = js_sys::Function::from(jsrust);
+            let _ = func.call1(&wasm_bindgen::JsValue::NULL, &wasm_bindgen::JsValue::from_str("user"));
+        }
+    }
+}
+
 // Expand AppState for interop waiting
 // In state.rs (or wherever your AppState is defined):
 //
@@ -94,3 +152,48 @@ pub fn set_jsrust_response_handler(cb: &js_sys::Function) {
 // self.app_state = AppState::InteropPending("Waiting for JS response...".to_string());
 //
 // In your interop callback, set it back to Normal or Error as appropriate.
+
+#[wasm_bindgen]
+pub fn supabase_session(session: &JsValue) {
+    // You can process the session object here or store it as needed
+    // For now, just log it for debugging
+    log::info!("[JSInterop] Received Supabase session: {:?}", session);
+    // TODO: Store or process session as needed
+}
+
+use crate::erust::uiux::supabase::SupabaseUserRaw;
+use crate::erust::uiux::user::User as AppUser;
+use std::cell::RefCell;
+
+thread_local! {
+    static LAST_SUPABASE_USER: RefCell<Option<AppUser>> = RefCell::new(None);
+}
+
+#[wasm_bindgen]
+pub fn supabase_user(user: &JsValue) {
+    // Use JSON::stringify and serde_json for compatibility
+    let user_obj: Result<SupabaseUserRaw, _> = js_sys::JSON::stringify(user)
+        .ok()
+        .and_then(|js_str| js_str.as_string())
+        .map(|json_str| serde_json::from_str(&json_str))
+        .unwrap_or_else(|| Err(serde_json::Error::io(std::io::Error::new(std::io::ErrorKind::Other, "Failed to stringify JsValue"))));
+    match user_obj {
+        Ok(raw) => {
+            // Map SupabaseUserRaw to our AppUser struct
+            let mut app_user = AppUser::new();
+            app_user.set_id(raw.id);
+            app_user.set_email(raw.email);
+            app_user.authenticate();
+            LAST_SUPABASE_USER.with(|cell| cell.replace(Some(app_user.clone())));
+            log::info!("[JSInterop] Stored Supabase user: {:?}", app_user);
+        },
+        Err(e) => {
+            log::error!("[JSInterop] Failed to parse Supabase user: {:?}", e);
+        }
+    }
+}
+
+/// Retrieve and clear the last Supabase user (for app.rs to use)
+pub fn take_supabase_user() -> Option<AppUser> {
+    LAST_SUPABASE_USER.with(|cell| cell.borrow_mut().take())
+}

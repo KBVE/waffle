@@ -110,6 +110,8 @@ impl TemplateApp {
         app.app_state = AppState::Init;
         app.db.load_from_indexeddb();
         app.load_filtered_repos_from_idb(&cc.egui_ctx);
+        // --- Call JSRust to request user info when app is ready ---
+        crate::erust::uiux::javascript_interop::request_user_from_js();
         app
     }
 
@@ -342,6 +344,14 @@ impl TemplateApp {
                 ctx.open_url(egui::OpenUrl::new_tab(&logo_link));
             }
             ui.separator();
+            // --- Show welcome and email if authenticated ---
+            if self.user.is_logged_in() {
+                ui.heading("Welcome,");
+                if let Some(email) = &self.user.email {
+                    ui.label(format!("Email: {}", email));
+                }
+                ui.separator();
+            }
             ui.heading("Filtered Repositories");
             let filtered = self.filtered_repos.clone().unwrap_or_default();
             let current_language = self.db.get_language();
@@ -400,7 +410,9 @@ impl TemplateApp {
                         "",
                         "",
                     );
+                    self.user = User::default(); // Reset user to blank/default
                     self.toast_message = Some("Sent logout request to JS".to_string());
+                    ctx.request_repaint(); // Ensure UI updates
                 }
                 ui.label("Waffle v0.1.0");
             });
@@ -417,6 +429,14 @@ impl TemplateApp {
                 .show(ctx, |ui| {
                     self.auth_widget.show(ctx, ui);
                 });
+        }
+
+        // --- Check for new Supabase user and update state ---
+        if let Some(new_user) = crate::erust::uiux::javascript_interop::take_supabase_user() {
+            if new_user.is_authenticated {
+                self.user = new_user;
+                ctx.request_repaint();
+            }
         }
     }
 }
