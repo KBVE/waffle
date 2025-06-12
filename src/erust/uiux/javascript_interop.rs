@@ -161,10 +161,39 @@ pub fn supabase_session(session: &JsValue) {
     // TODO: Store or process session as needed
 }
 
+use crate::erust::uiux::supabase::SupabaseUserRaw;
+use crate::erust::uiux::user::User as AppUser;
+use std::cell::RefCell;
+
+thread_local! {
+    static LAST_SUPABASE_USER: RefCell<Option<AppUser>> = RefCell::new(None);
+}
+
 #[wasm_bindgen]
 pub fn supabase_user(user: &JsValue) {
-    // You can process the user object here or store it as needed
-    // For now, just log it for debugging
-    log::info!("[JSInterop] Received Supabase user: {:?}", user);
-    // TODO: Store or process user as needed
+    // Use JSON::stringify and serde_json for compatibility
+    let user_obj: Result<SupabaseUserRaw, _> = js_sys::JSON::stringify(user)
+        .ok()
+        .and_then(|js_str| js_str.as_string())
+        .map(|json_str| serde_json::from_str(&json_str))
+        .unwrap_or_else(|| Err(serde_json::Error::io(std::io::Error::new(std::io::ErrorKind::Other, "Failed to stringify JsValue"))));
+    match user_obj {
+        Ok(raw) => {
+            // Map SupabaseUserRaw to our AppUser struct
+            let mut app_user = AppUser::new();
+            app_user.set_id(raw.id);
+            app_user.set_email(raw.email);
+            app_user.authenticate();
+            LAST_SUPABASE_USER.with(|cell| cell.replace(Some(app_user.clone())));
+            log::info!("[JSInterop] Stored Supabase user: {:?}", app_user);
+        },
+        Err(e) => {
+            log::error!("[JSInterop] Failed to parse Supabase user: {:?}", e);
+        }
+    }
+}
+
+/// Retrieve and clear the last Supabase user (for app.rs to use)
+pub fn take_supabase_user() -> Option<AppUser> {
+    LAST_SUPABASE_USER.with(|cell| cell.borrow_mut().take())
 }

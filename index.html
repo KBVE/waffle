@@ -463,8 +463,8 @@
                       resp.data.user
                     );
 
-                    if (window.wasmBindings?.handle_jsrust_response) {
-                      window.wasmBindings.handle_jsrust_response(resp);
+                    if (window.wasmBindings?.supabase_user) {
+                      window.wasmBindings.supabase_user(resp.data.user);
                       
                     } else {
                       console.log("[DEBUG]: No Bindgenie - Huge problem.");

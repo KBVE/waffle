@@ -344,6 +344,14 @@ impl TemplateApp {
                 ctx.open_url(egui::OpenUrl::new_tab(&logo_link));
             }
             ui.separator();
+            // --- Show welcome and email if authenticated ---
+            if self.user.is_logged_in() {
+                ui.heading("Welcome,");
+                if let Some(email) = &self.user.email {
+                    ui.label(format!("Email: {}", email));
+                }
+                ui.separator();
+            }
             ui.heading("Filtered Repositories");
             let filtered = self.filtered_repos.clone().unwrap_or_default();
             let current_language = self.db.get_language();
