@@ -9,7 +9,6 @@
   />
 
   <head>
-    <!-- change this to your project name -->
     <title>Waffle - Template</title>
 
     <!-- config for our rust wasm binary. go to https://trunkrs.dev/assets/#rust for more customization -->
@@ -26,6 +25,43 @@
 
     <script type="module">
       import createWorker from "https://esm.sh/@supabase/supabase-js?worker";
+      import { createClient } from "https://esm.sh/@supabase/supabase-js";
+
+      (async () => {
+        window.sb = createClient(
+          "https://qmpdruitzlownnnnjmpk.supabase.co",
+          "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFtcGRydWl0emxvd25ubm5qbXBrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk2NjA0NTYsImV4cCI6MjA2NTIzNjQ1Nn0.OhD3qN4dq0TMA65qVGvry_QsZEeLKK7RbwYP3QzAvcY"
+        );
+
+        const {
+          data: { session },
+        } = await window.sb.auth.getSession();
+
+        if (session) {
+          let retries = 50;
+          while (!window.supabase?.worker && retries-- > 0) {
+            await new Promise((r) => setTimeout(r, 100));
+          }
+
+          if (window.supabase?.worker) {
+            console.log("[Main] Session detected, syncing to worker...");
+
+            window.supabase.worker.postMessage({
+              id: `session_sync`,
+              action: "setSession",
+              payload: {
+                access_token: session.access_token,
+                refresh_token: session.refresh_token,
+              },
+            });
+          } else {
+            console.log("[Main] Worker not found.");
+          }
+        }
+        else {
+            console.log("[Main] No session found — user is logged out.");
+        }
+      })();
 
       // Create the worker
       (async () => {
@@ -75,10 +111,12 @@
 
             case "session":
               result = await supabase.auth.getSession();
+              console.log("[Worker] Session:", result);
               break;
 
             case "getUser":
               result = await supabase.auth.getUser();
+              console.log("[Worker] User:", result);
               break;
 
             case "getProfile":
@@ -89,7 +127,13 @@
                 .single();
               result = { data, error };
               break;
-
+            case "setSession":
+                result = await supabase.auth.setSession({
+                  access_token: payload.access_token,
+                  refresh_token: payload.refresh_token
+                });
+                console.log("[Worker] Session set via setSession:", result);
+                break;
             default:
               throw new Error(\`Unknown action: \${action}\`);
           }
@@ -141,6 +185,8 @@
           session: () => sendToWorker("session", {}),
           getUser: () => sendToWorker("getUser", {}),
           getProfile: (user_id) => sendToWorker("getProfile", { user_id }),
+          setSession: () => sendToWorker("setSession", {session}),
+          worker: supabaseWorker,
         };
 
         console.log("[JS]: Supabase worker initialized and ready.");
@@ -407,24 +453,70 @@
             }
             break;
           case "login":
+            console.log("[DEBUG]: Called Login Here");
+
             if (
               message &&
               message.email &&
               message.password &&
               message.captcha_token
             ) {
-              window.supabase
-                .login(message.email, message.password, message.captcha_token)
+              window.sb.auth
+                .signInWithPassword({
+                  email: message.email,
+                  password: message.password,
+                  options: {
+                    captchaToken: message.captcha_token,
+                  },
+                })
                 .then((resp) => {
+                  const session = resp.data?.session;
+                  console.log("[DEBUG]: LOGIN -> THEN PLACEHOLDER");
+
+                  // Forward session to the worker if login was successful
+                  if (
+                    session &&
+                    session.access_token &&
+                    session.refresh_token
+                  ) {
+                    window.supabase.worker.postMessage({
+                      id: `sync_session_${Date.now()}`,
+                      action: "setSession",
+                      payload: {
+                        access_token: session.access_token,
+                        refresh_token: session.refresh_token,
+                      },
+                    });
+                  }
+
                   if (window.JSRustResponseHandler) {
                     window.JSRustResponseHandler(resp);
                   }
+                })
+                .catch((err) => {
+                  console.error("[ERROR]: Login failed:", err);
+
+                  if (window.JSRustResponseHandler) {
+                    window.JSRustResponseHandler({
+                      success: false,
+                      error: err.message || "Unexpected login error",
+                    });
+                  }
                 });
+            } else {
+              console.warn("[WARN]: Incomplete login message:", message);
+              if (window.JSRustResponseHandler) {
+                window.JSRustResponseHandler({
+                  success: false,
+                  error: "Missing email, password, or captcha_token",
+                });
+              }
             }
             break;
           case "logout":
             if (window.supabase && window.supabase.logout) {
-              window.supabase.logout()
+              window.supabase
+                .logout()
                 .then((resp) => {
                   if (window.JSRustResponseHandler) {
                     window.JSRustResponseHandler(resp);
