@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+
+  <!-- Disable zooming: -->
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0, user-scalable=no"
+  />
+
+  <head>
+    <title>Waffle - Template</title>
+
+    <!-- config for our rust wasm binary. go to https://trunkrs.dev/assets/#rust for more customization -->
+    
+<script type="module">
+import init, * as bindings from 'https://kbve.github.io/waffle/waffle_search.js';
+const wasm = await init({ module_or_path: 'https://kbve.github.io/waffle/waffle_search_bg.wasm' });
+
+
+window.wasmBindings = bindings;
+
+
+dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
+
+</script>
+    <!-- this is the base url relative to which other urls will be constructed. trunk will insert this from the public-url option -->
+    <base href="https://kbve.github.io/waffle/" />
+
+    <link rel="icon" href="https://kbve.github.io/waffle/favicon.ico" integrity="sha384-jNOAE6jgE03LznIulCTVP6BH4NrTuROFjP9wj8bV1UUMJKtZAvstFpIAP3PDcFpx"/>
+
+    <!-- Worker -> SupaBase -->
+    <!-- 
+    Anon Key : eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFtcGRydWl0emxvd25ubm5qbXBrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk2NjA0NTYsImV4cCI6MjA2NTIzNjQ1Nn0.OhD3qN4dq0TMA65qVGvry_QsZEeLKK7RbwYP3QzAvcY
+     -->
+
+    <script type="module">
+      import createWorker from "https://esm.sh/@supabase/supabase-js?worker";
+      import { createClient } from "https://esm.sh/@supabase/supabase-js";
+
+      // Setting up the Supabase Main Thread.
+      (async () => {
+        window.sb = createClient(
+          "https://qmpdruitzlownnnnjmpk.supabase.co",
+          "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFtcGRydWl0emxvd25ubm5qbXBrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk2NjA0NTYsImV4cCI6MjA2NTIzNjQ1Nn0.OhD3qN4dq0TMA65qVGvry_QsZEeLKK7RbwYP3QzAvcY"
+        );
+
+        const {
+          data: { session },
+        } = await window.sb.auth.getSession();
+
+        if (session) {
+          let retries = 50;
+          while (!window.supabase?.worker && retries-- > 0) {
+            await new Promise((r) => setTimeout(r, 100));
+          }
+
+          if (window.supabase?.worker) {
+            console.log("[Main] Session detected, syncing to worker...");
+
+            window.supabase.worker.postMessage({
+              id: `session_sync`,
+              action: "setSession",
+              payload: {
+                access_token: session.access_token,
+                refresh_token: session.refresh_token,
+              },
+            });
+
+            let retries = 50;
+            while (!window.supabase?.getUser && retries-- > 0) {
+              await new Promise((r) => setTimeout(r, 100));
+            }
+
+            if (window.supabase?.getUser) {
+              console.log("User Found");
+              //   const __user = window.supabase.getUser();
+              //   __user
+              //     .then((resp) => {
+              //       if (resp?.data.user) {
+              //         console.log(
+              //           "[DEBUG]: User object received",
+              //           resp.data.user
+              //         );
+              //         if (window.JSRustResponseHandler) {
+              //           window.JSRustResponseHandler(resp);
+              //         } else {
+              //           console.log("[DEBUG]: No Bindgenie - Huge problem.");
+              //         }
+              //       } else {
+              //         console.log("[DEBUG]: No user in response", resp);
+              //       }
+              //     })
+              //     .catch((err) => {
+              //       console.error("[ERROR]: Failed to get user", err);
+              //     });
+            } else {
+              console.log("No User Found");
+            }
+          } else {
+            console.log("[Main] Worker not found.");
+          }
+        } else {
+          console.log("[Main] No session found — user is logged out.");
+        }
+      })();
+
+      // Create the worker
+      (async () => {
+        const supabaseWorker = await createWorker({
+          name: "supabase-worker",
+          inject: `
+        const supabase = $module.createClient(
+        "https://qmpdruitzlownnnnjmpk.supabase.co",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFtcGRydWl0emxvd25ubm5qbXBrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk2NjA0NTYsImV4cCI6MjA2NTIzNjQ1Nn0.OhD3qN4dq0TMA65qVGvry_QsZEeLKK7RbwYP3QzAvcY",
+        { 
+            auth: {
+              detectSessionInUrl: false,
+              persistSession: false,
+          }
+        }
+        );
+
+      self.onmessage = async (e) => {
+        const { id, action, payload } = e.data;
+
+        try {
+          let result;
+
+          switch (action) {
+            case "signup":
+              result = await supabase.auth.signUp({
+                email: payload.email,
+                password: payload.password,
+                options: { captchaToken: payload.captchaToken }
+              });
+              console.log("[Worker] Signup result:", result);
+              break;
+
+            case "login":
+              result = await supabase.auth.signInWithPassword({
+                email: payload.email,
+                password: payload.password,
+                options: { captchaToken: payload.captchaToken }
+              });
+              console.log("[Worker] Login result:", result);
+
+              break;
+
+            case "logout":
+              result = await supabase.auth.signOut();
+              console.log("[Worker] Logout result:", result);
+              break;
+
+            case "session":
+              result = await supabase.auth.getSession();
+              console.log("[Worker] Session:", result);
+              break;
+
+            case "getUser":
+              result = await supabase.auth.getUser();
+              console.log("[Worker] User:", result);
+              break;
+
+            case "getProfile":
+              const { data, error } = await supabase
+                .from("user_profiles")
+                .select("*")
+                .eq("id", payload.user_id)
+                .single();
+              result = { data, error };
+              break;
+            case "setSession":
+                result = await supabase.auth.setSession({
+                  access_token: payload.access_token,
+                  refresh_token: payload.refresh_token
+                });
+                console.log("[Worker] Session set via setSession:", result);
+                break;
+            default:
+              throw new Error(\`Unknown action: \${action}\`);
+          }
+
+          self.postMessage({
+            id,
+            success: !result.error,
+            data: result.data,
+            error: result.error?.message || null
+          });
+
+        } catch (err) {
+          self.postMessage({
+            id,
+            success: false,
+            error: err.message || "Unexpected error"
+          });
+        }
+      };
+    `,
+        });
+
+        const pending = new Map();
+        let counter = 0;
+
+        function sendToWorker(action, payload) {
+          return new Promise((resolve) => {
+            const id = `req_${++counter}`;
+            console.log(`[Worker]: Handling ${id}`);
+            pending.set(id, resolve);
+            supabaseWorker.postMessage({ id, action, payload });
+          });
+        }
+
+        supabaseWorker.onmessage = (e) => {
+          const { id, success, data, error } = e.data;
+          if (pending.has(id)) {
+            pending.get(id)({ success, data, error });
+            pending.delete(id);
+          }
+        };
+
+        window.supabase = {
+          signup: (email, password, captchaToken) =>
+            sendToWorker("signup", { email, password, captchaToken }),
+          login: (email, password, captchaToken) =>
+            sendToWorker("login", { email, password, captchaToken }),
+          logout: () => sendToWorker("logout", {}),
+          session: () => sendToWorker("session", {}),
+          getUser: () => sendToWorker("getUser", {}),
+          getProfile: (user_id) => sendToWorker("getProfile", { user_id }),
+          setSession: () => sendToWorker("setSession", { session }),
+          worker: supabaseWorker,
+        };
+
+        console.log("[JS]: Supabase worker initialized and ready.");
+      })();
+    </script>
+
+    
+    
+    
+    
+    
+    
+
+    <link rel="manifest" href="manifest.json" />
+    <link rel="apple-touch-icon" href="assets/icon_ios_touch_192.png" />
+    <meta
+      name="theme-color"
+      media="(prefers-color-scheme: light)"
+      content="white"
+    />
+    <meta
+      name="theme-color"
+      media="(prefers-color-scheme: dark)"
+      content="#404040"
+    />
+
+    <style>
+      html {
+        /* Remove touch delay: */
+        touch-action: manipulation;
+      }
+
+      body {
+        /* Light mode background color for what is not covered by the egui canvas,
+            or where the egui canvas is translucent. */
+        background: #909090;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        body {
+          /* Dark mode background color for what is not covered by the egui canvas,
+                or where the egui canvas is translucent. */
+          background: #404040;
+        }
+      }
+
+      /* Allow canvas to fill entire web page: */
+      html,
+      body {
+        overflow: hidden;
+        margin: 0 !important;
+        padding: 0 !important;
+        height: 100%;
+        width: 100%;
+      }
+
+      /* Make canvas fill entire document: */
+      canvas {
+        margin-right: auto;
+        margin-left: auto;
+        display: block;
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+      }
+
+      .centered {
+        margin-right: auto;
+        margin-left: auto;
+        display: block;
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        color: #f0f0f0;
+        font-size: 24px;
+        font-family: Ubuntu-Light, Helvetica, sans-serif;
+        text-align: center;
+      }
+
+      /* ---------------------------------------------- */
+      /* Loading animation from https://loading.io/css/ */
+      .lds-dual-ring {
+        display: inline-block;
+        width: 24px;
+        height: 24px;
+      }
+
+      .lds-dual-ring:after {
+        content: " ";
+        display: block;
+        width: 24px;
+        height: 24px;
+        margin: 0px;
+        border-radius: 50%;
+        border: 3px solid #fff;
+        border-color: #fff transparent #fff transparent;
+        animation: lds-dual-ring 1.2s linear infinite;
+      }
+
+      @keyframes lds-dual-ring {
+        0% {
+          transform: rotate(0deg);
+        }
+
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+  <link rel="modulepreload" href="https://kbve.github.io/waffle/waffle_search.js" crossorigin="anonymous" integrity="sha384-XdX0ItyTFG6FORvVo7LGNj7cvNQSiCfTJGNSNJVgX+9LYrqzQMmuFd5pOcyUmWXJ"><link rel="preload" href="https://kbve.github.io/waffle/waffle_search_bg.wasm" crossorigin="anonymous" integrity="sha384-Q1ON7ieyxY9OyRFk+4V1EKnYM9WmLhykr+df1PgjXFSET60KWdmaSAlOLpE9Iuao" as="fetch" type="application/wasm"></head>
+
+  <body>
+    <!-- The WASM code will resize the canvas dynamically -->
+    <!-- the id is hardcoded in main.rs . so, make sure both match. -->
+    <canvas id="the_canvas_id"></canvas>
+
+    <!-- the loading spinner will be removed in main.rs -->
+    <div class="centered" id="loading_text">
+      <p style="font-size: 16px">Loading…</p>
+      <div class="lds-dual-ring"></div>
+    </div>
+
+    <!--Register Service Worker. this will cache the wasm / js scripts for offline use (for PWA functionality). -->
+    <!-- Force refresh (Ctrl + F5) to load the latest files instead of cached files  -->
+    <script>
+      // We disable caching during development so that we always view the latest version.
+      if ("serviceWorker" in navigator && window.location.hash !== "#dev") {
+        window.addEventListener("load", function () {
+          navigator.serviceWorker.register("sw.js");
+        });
+      }
+    </script>
+
+    <!-- hCaptcha widget integration -->
+    <script src="https://js.hcaptcha.com/1/api.js" async defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+
+    <div
+      id="captcha-container"
+      style="
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background: rgba(0, 0, 0, 0.7);
+        z-index: 9999;
+        align-items: center;
+        justify-content: center;
+      "
+    >
+      <div
+        style="
+          background: #222;
+          padding: 32px;
+          border-radius: 12px;
+          display: inline-block;
+        "
+      >
+        <div
+          id="hcaptcha-widget"
+          class="h-captcha"
+          data-sitekey="e19cf4a6-2168-49a2-88fe-716e97569e88"
+          data-callback="onHCaptchaSuccess"
+        ></div>
+        <button
+          onclick="closeCaptcha()"
+          style="margin-top: 16px; margin-right: 8px"
+          class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded shadow transition-colors duration-150"
+        >
+          Cancel
+        </button>
+        <button
+          onclick="resetCaptcha()"
+          style="margin-top: 16px"
+          class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded shadow transition-colors duration-150"
+        >
+          Reset Captcha
+        </button>
+      </div>
+    </div>
+    <script>
+      // Show/hide captcha overlay via a single JS entrypoint for Rust/WASM
+      function openCaptcha() {
+        document.getElementById("captcha-container").style.display = "flex";
+      }
+      function closeCaptcha() {
+        document.getElementById("captcha-container").style.display = "none";
+      }
+      // Unified JS entrypoint for Rust/WASM with action/message
+      function JSRust(action, message) {
+        // If message is an object, extract action from it (for new interop pattern)
+        if (typeof action === "object" && action !== null) {
+          message = action;
+          action = message.action;
+        }
+        switch (action) {
+          case "user": {
+            console.log("[Interop] - Rust Requires User");
+
+            let retries = 5;
+
+            function pollForValidUser() {
+              if (!window.supabase?.getUser) {
+                if (--retries > 0) {
+                  return setTimeout(pollForValidUser, 1000);
+                }
+                console.warn("[Interop] - Supabase.getUser not available.");
+                return;
+              }
+
+              window.supabase
+                .getUser()
+                .then((resp) => {
+                  if (resp?.data?.user) {
+                    console.log(
+                      "[DEBUG]:[INTEROP]: User object received",
+                      resp.data.user
+                    );
+
+                    if (window.wasmBindings?.supabase_user) {
+                      window.wasmBindings.supabase_user(resp.data.user);
+                    } else {
+                      console.log("[DEBUG]: No Bindgenie - Huge problem.");
+                    }
+                  } else {
+                    if (--retries > 0) {
+                      setTimeout(pollForValidUser, 100);
+                    } else {
+                      console.warn(
+                        "[Interop] - Supabase session not available after retries."
+                      );
+                      console.log("[DEBUG]: No user in response", resp);
+                    }
+                  }
+                })
+                .catch((err) => {
+                  console.error("[ERROR]: Failed to get user", err);
+                });
+            }
+
+            pollForValidUser();
+            break;
+          }
+          case "openCaptcha":
+            openCaptcha();
+            break;
+          case "closeCaptcha":
+            closeCaptcha();
+            break;
+          case "register":
+            console.log("[DEBUG]: Called Registered Here");
+            resetCaptcha();
+            if (
+              message &&
+              message.email &&
+              message.password &&
+              message.captcha_token
+            ) {
+              console.log("[DEBUG]: Processing Message", message);
+              const { email, password, captcha_token } = message;
+
+              try {
+                const signupPromise = window.supabase.signup(
+                  email,
+                  password,
+                  captcha_token
+                );
+                console.log("[DEBUG]: Created signupPromise", signupPromise);
+
+                signupPromise
+                  .then((resp) => {
+                    console.debug(
+                      "[DEBUG]: Received Response from Supabase Worker:",
+                      resp
+                    );
+                    if (window.JSRustResponseHandler) {
+                      window.JSRustResponseHandler(resp);
+                    }
+
+                    if (window.wasmBindings?.supabase_user && resp.data?.user) {
+                      window.wasmBindings.supabase_user(resp.data.user);
+                    } 
+                    
+                    if (
+                      window.wasmBindings?.supabase_user &&
+                      resp.data?.session?.user
+                    ) {
+                      window.wasmBindings.supabase_user(resp.data.session.user);
+                    }
+                  })
+                  .catch((err) => {
+                    console.error("[ERROR]: signup call failed", err);
+                  })
+                  .finally(() => {
+                    console.log("[DEBUG]: Finally block executed");
+                  });
+              } catch (err) {
+                console.error("[EXCEPTION]: Threw during signup call", err);
+              }
+            } else {
+              console.warn(
+                "[WARN]: Missing email/password/captcha_token",
+                message
+              );
+            }
+            break;
+          case "login":
+            console.log("[DEBUG]: Called Login Here");
+            resetCaptcha();
+            if (
+              message &&
+              message.email &&
+              message.password &&
+              message.captcha_token
+            ) {
+              window.sb.auth
+                .signInWithPassword({
+                  email: message.email,
+                  password: message.password,
+                  options: {
+                    captchaToken: message.captcha_token,
+                  },
+                })
+                .then((resp) => {
+                  const session = resp.data?.session;
+                  console.log("[DEBUG]: LOGIN -> THEN PLACEHOLDER");
+
+                  // Forward session to the worker if login was successful
+                  if (
+                    session &&
+                    session.access_token &&
+                    session.refresh_token
+                  ) {
+                    window.supabase.worker.postMessage({
+                      id: `sync_session_${Date.now()}`,
+                      action: "setSession",
+                      payload: {
+                        access_token: session.access_token,
+                        refresh_token: session.refresh_token,
+                      },
+                    });
+                  }
+
+                  if (window.wasmBindings?.handle_jsrust_response) {
+                    window.wasmBindings.handle_jsrust_response(resp);
+                    resp;
+                  }
+
+                  if (window.wasmBindings?.supabase_user && resp.data?.user) {
+                    window.wasmBindings.supabase_user(resp.data.user);
+                }
+
+                })
+                .catch((err) => {
+                  console.error("[ERROR]: Login failed:", err);
+
+                  if (window.JSRustResponseHandler) {
+                    window.JSRustResponseHandler({
+                      success: false,
+                      error: err.message || "Unexpected login error",
+                    });
+                  }
+                });
+            } else {
+              console.warn("[WARN]: Incomplete login message:", message);
+              if (window.JSRustResponseHandler) {
+                window.JSRustResponseHandler({
+                  success: false,
+                  error: "Missing email, password, or captcha_token",
+                });
+              }
+            }
+            break;
+          case "logout":
+            if (window.supabase && window.supabase.logout) {
+              window.supabase
+                .logout()
+                .then((resp) => {
+                  if (window.JSRustResponseHandler) {
+                    window.JSRustResponseHandler(resp);
+                  }
+                })
+                .catch((err) => {
+                  console.error("[ERROR]: logout call failed", err);
+                });
+            }
+            break;
+          case "log":
+            if (message) {
+              console.log("[JSRust]", message);
+            }
+            break;
+          case "resetCaptcha":
+            resetCaptcha();
+            break;
+          // Add more actions as needed
+          default:
+            console.warn("[JSRust] Unknown action:", action, message);
+        }
+      }
+      // Called by hCaptcha when solved
+      function onHCaptchaSuccess(token) {
+        JSRust("closeCaptcha");
+        if (window.wasmBindings && window.wasmBindings.pass_captcha_token) {
+          window.wasmBindings.pass_captcha_token(token);
+        } else if (window.pass_captcha_token) {
+          console.log("[KBVE]: Warning binding is not set!");
+          window.pass_captcha_token(token);
+        }
+      }
+      // For Rust/WASM: window.JSRust('openCaptcha') or window.JSRust('closeCaptcha')
+      window.JSRust = JSRust;
+      window.openCaptcha = openCaptcha;
+      window.closeCaptcha = closeCaptcha;
+
+      // Set up a default JSRustResponseHandler to forward to WASM if available
+
+      function resetCaptcha() {
+        if (window.hcaptcha) {
+          window.hcaptcha.reset();
+        } else {
+          const widget = document.querySelector(".h-captcha");
+          if (widget && widget.reset) {
+            widget.reset();
+          }
+        }
+      }
+    </script>
+    <!-- End hCaptcha integration -->
+  </body>
+</html>
+
+<!-- Powered by egui: https://github.com/emilk/egui/ -->
