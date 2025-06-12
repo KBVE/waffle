@@ -31,6 +31,14 @@ pub fn send_action_message(action: &str, email: &str, password: &str, captcha_to
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use js_sys::JSON;
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct User {
+    pub id: String,
+    pub email: String,
+    // Add more fields as needed
+}
 
 /// Call this during app initialization to handle JS->Rust responses
 pub fn setup_jsrust_response_handler<F>(mut callback: F)
@@ -48,6 +56,30 @@ where
         } else {
             serde_json::Value::Null
         };
+
+        // --- Login response handling ---
+        if let Some(success) = resp_json.get("success").and_then(|v| v.as_bool()) {
+            if success {
+                // Try to extract user info from the response
+                if let Some(data) = resp_json.get("data") {
+                    if let Some(session) = data.get("session") {
+                        if let Some(user) = session.get("user") {
+                            if let Ok(user_obj) = serde_json::from_value::<User>(user.clone()) {
+                                // Here you can update your app state with user_obj
+                                log::info!("Login successful! User: {:?}", user_obj);
+                                // Example: callback could update state
+                                // callback(serde_json::to_value(user_obj).unwrap());
+                            }
+                        }
+                    }
+                }
+            } else {
+                if let Some(error) = resp_json.get("error") {
+                    log::error!("Login failed: {:?}", error);
+                }
+            }
+        }
+        // Call the user callback for further handling
         callback(resp_json);
     }) as Box<dyn FnMut(JsValue)>);
 

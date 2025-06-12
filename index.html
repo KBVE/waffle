@@ -54,12 +54,19 @@
                 refresh_token: session.refresh_token,
               },
             });
+
+            let retries = 50;
+            while (!window.supabase?.worker && retries-- > 0) {
+              await new Promise((r) => setTimeout(r, 100));
+            }
+
+            if (window.supabase?.worker) {
+            }
           } else {
             console.log("[Main] Worker not found.");
           }
-        }
-        else {
-            console.log("[Main] No session found — user is logged out.");
+        } else {
+          console.log("[Main] No session found — user is logged out.");
         }
       })();
 
@@ -70,7 +77,7 @@
           inject: `
         const supabase = $module.createClient(
         "https://qmpdruitzlownnnnjmpk.supabase.co",
-        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFtcGRydWl0emxvd25ubm5qbXBrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk2NjA0NTYsImV4cCI6MjA2NTIzNjQ1Nn0",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFtcGRydWl0emxvd25ubm5qbXBrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk2NjA0NTYsImV4cCI6MjA2NTIzNjQ1Nn0.OhD3qN4dq0TMA65qVGvry_QsZEeLKK7RbwYP3QzAvcY",
         { 
             auth: {
               detectSessionInUrl: false,
@@ -186,7 +193,7 @@
           session: () => sendToWorker("session", {}),
           getUser: () => sendToWorker("getUser", {}),
           getProfile: (user_id) => sendToWorker("getProfile", { user_id }),
-          setSession: () => sendToWorker("setSession", {session}),
+          setSession: () => sendToWorker("setSession", { session }),
           worker: supabaseWorker,
         };
 
@@ -379,14 +386,14 @@
         ></div>
         <button
           onclick="closeCaptcha()"
-          style="margin-top: 16px; margin-right: 8px;"
+          style="margin-top: 16px; margin-right: 8px"
           class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded shadow transition-colors duration-150"
         >
           Cancel
         </button>
         <button
           onclick="resetCaptcha()"
-          style="margin-top: 16px;"
+          style="margin-top: 16px"
           class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded shadow transition-colors duration-150"
         >
           Reset Captcha
