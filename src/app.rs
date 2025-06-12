@@ -68,6 +68,8 @@ pub struct TemplateApp {
     user: User,
     #[serde(skip)]
     show_auth_window: bool, // Track if auth window should be shown
+    #[serde(skip)]
+    show_welcome: bool, // Track if welcome window should be shown
 }
 
 impl Default for TemplateApp {
@@ -90,7 +92,8 @@ impl Default for TemplateApp {
             search_widget: Some(SearchWidget::new()),
             auth_widget: AuthWidget::new(false),
             user: User::default(),
-            show_auth_window: false, // Do not show auth window by default
+            show_auth_window: false,
+            show_welcome: true, // Show welcome window by default
         }
     }
 }
@@ -375,11 +378,12 @@ impl TemplateApp {
         }
 
         // Show welcome dialog if DB is empty
-        if self.app_state == AppState::Empty {
+        if self.app_state == AppState::Empty && self.show_welcome {
             egui::Window::new("Welcome to the Waffle!")
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .open(&mut self.show_welcome)
                 .show(ctx, |ui| {
                     ui.heading("Welcome to the Waffle!");
                     ui.label("Please sync the languages you would like to see.");
