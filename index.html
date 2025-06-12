@@ -70,8 +70,9 @@
           inject: `
         const supabase = $module.createClient(
         "https://qmpdruitzlownnnnjmpk.supabase.co",
-        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFtcGRydWl0emxvd25ubm5qbXBrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk2NjA0NTYsImV4cCI6MjA2NTIzNjQ1Nn0.OhD3qN4dq0TMA65qVGvry_QsZEeLKK7RbwYP3QzAvcY",
-        { auth: {
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFtcGRydWl0emxvd25ubm5qbXBrIiwicm9zZSI6ImFub24iLCJpYXQiOjE3NDk2NjA0NTYsImV4cCI6MjA2NTIzNjQ1Nn0.OhD3qN4dq0TMA65qVGvry_QsZEeLKK7RbwYP3QzAvcY",
+        { 
+            auth: {
               detectSessionInUrl: false,
               persistSession: false,
           }
@@ -378,10 +379,17 @@
         ></div>
         <button
           onclick="closeCaptcha()"
-          style="margin-top: 16px"
+          style="margin-top: 16px; margin-right: 8px;"
           class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded shadow transition-colors duration-150"
         >
           Cancel
+        </button>
+        <button
+          onclick="resetCaptcha()"
+          style="margin-top: 16px;"
+          class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded shadow transition-colors duration-150"
+        >
+          Reset Captcha
         </button>
       </div>
     </div>
@@ -409,6 +417,7 @@
             break;
           case "register":
             console.log("[DEBUG]: Called Registered Here");
+            resetCaptcha();
             if (
               message &&
               message.email &&
@@ -454,7 +463,7 @@
             break;
           case "login":
             console.log("[DEBUG]: Called Login Here");
-
+            resetCaptcha();
             if (
               message &&
               message.email &&
@@ -532,6 +541,9 @@
               console.log("[JSRust]", message);
             }
             break;
+          case "resetCaptcha":
+            resetCaptcha();
+            break;
           // Add more actions as needed
           default:
             console.warn("[JSRust] Unknown action:", action, message);
@@ -565,6 +577,17 @@
           );
         }
       };
+
+      function resetCaptcha() {
+        if (window.hcaptcha) {
+          window.hcaptcha.reset();
+        } else {
+          const widget = document.querySelector(".h-captcha");
+          if (widget && widget.reset) {
+            widget.reset();
+          }
+        }
+      }
     </script>
     <!-- End hCaptcha integration -->
   </body>
