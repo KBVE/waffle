@@ -29,15 +29,31 @@ pub fn send_action_message(action: &str, email: &str, password: &str, captcha_to
 /// Register a JS callback handler for responses from JS to Rust
 /// The callback will be called with a JsValue (the response object)
 use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsCast;
+use js_sys::JSON;
 
-#[wasm_bindgen]
-pub fn set_jsrust_response_handler(cb: &js_sys::Function) {
-    // Store the callback globally in JS (window.JSRustResponseHandler)
-    let _ = js_sys::Reflect::set(
-        &js_sys::global(),
-        &JsValue::from_str("JSRustResponseHandler"),
-        cb,
-    );
+/// Call this during app initialization to handle JS->Rust responses
+pub fn setup_jsrust_response_handler<F>(mut callback: F)
+where
+    F: 'static + FnMut(serde_json::Value),
+{
+    let handler = Closure::wrap(Box::new(move |resp: JsValue| {
+        // Convert JsValue to serde_json::Value using JSON::stringify and serde_json
+        let resp_json = if let Ok(js_str) = JSON::stringify(&resp) {
+            if let Some(s) = js_str.as_string() {
+                serde_json::from_str(&s).unwrap_or_default()
+            } else {
+                serde_json::Value::Null
+            }
+        } else {
+            serde_json::Value::Null
+        };
+        callback(resp_json);
+    }) as Box<dyn FnMut(JsValue)>);
+
+    // Call the local set_jsrust_response_handler directly
+    set_jsrust_response_handler(handler.as_ref().unchecked_ref());
+    handler.forget(); // Prevent the closure from being dropped
 }
 
 /// Call this from JS to send a response back to Rust
@@ -51,3 +67,30 @@ pub fn handle_jsrust_response(response: &JsValue) {
         }
     }
 }
+
+// Add back the set_jsrust_response_handler as a public function so it is available in scope
+#[wasm_bindgen]
+pub fn set_jsrust_response_handler(cb: &js_sys::Function) {
+    // Store the callback globally in JS (window.JSRustResponseHandler)
+    let _ = js_sys::Reflect::set(
+        &js_sys::global(),
+        &JsValue::from_str("JSRustResponseHandler"),
+        cb,
+    );
+}
+
+// Expand AppState for interop waiting
+// In state.rs (or wherever your AppState is defined):
+//
+// pub enum AppState {
+//     Init,
+//     Normal,
+//     Empty,
+//     Error(String),
+//     InteropPending(String), // Add this variant for JS interop waiting
+// }
+//
+// Usage example:
+// self.app_state = AppState::InteropPending("Waiting for JS response...".to_string());
+//
+// In your interop callback, set it back to Normal or Error as appropriate.
