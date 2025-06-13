@@ -70,6 +70,8 @@ pub struct TemplateApp {
     show_auth_window: bool, // Track if auth window should be shown
     #[serde(skip)]
     show_welcome: bool, // Track if welcome window should be shown
+    #[serde(skip)]
+    needs_initial_state_check: bool, // Flag to check initial state
 }
 
 impl Default for TemplateApp {
@@ -94,6 +96,7 @@ impl Default for TemplateApp {
             user: User::default(),
             show_auth_window: false,
             show_welcome: true, // Show welcome window by default
+            needs_initial_state_check: true, // Check initial state on new
         }
     }
 }
@@ -112,6 +115,8 @@ impl TemplateApp {
         app.load_filtered_repos_from_idb(&cc.egui_ctx);
         // --- Call JSRust to request user info when app is ready ---
         crate::erust::uiux::javascript_interop::request_user_from_js();
+        // Instead of unsafe async pointer, set a flag for initial state check
+        app.needs_initial_state_check = true;
         app
     }
 
@@ -129,42 +134,39 @@ impl TemplateApp {
         });
     }
 
-    async fn check_empty_and_update_state_async(&mut self) {
-        use crate::db::idb;
-        use crate::db::github::Repository;
-        if let Ok(db) = idb::open_waffle_db().await {
-            let language = self.db.get_language();
-            let key = format!("latest_{}", language.to_lowercase());
-            match idb::get_repo::<Vec<Repository>>(&db, &language, &key).await {
-                Ok(Some(repos)) => {
-                    if repos.is_empty() {
-                        self.pending_app_state = Some(AppState::Empty);
-                    } else {
-                        self.pending_app_state = Some(AppState::Normal);
-                    }
-                },
-                Ok(None) => {
-                    self.pending_app_state = Some(AppState::Empty);
-                },
-                Err(_) => {
-                    self.pending_app_state = Some(AppState::Empty);
-                }
-            }
-        } else {
-            self.pending_app_state = Some(AppState::Empty);
-        }
-    }
-
-    pub fn filter_repos_async(&mut self, query: &str, ctx: &egui::Context) {
-        self.filter_loading = true;
-        self.filtered_repos = None;
-        if let Some(widget) = &mut self.search_widget {
-            widget.query = query.to_string();
-            widget.search(&self.db.get_language(), ctx);
-        }
-    }
-
     pub fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Perform initial async state check if needed
+        if self.needs_initial_state_check {
+            self.needs_initial_state_check = false;
+            let language = self.db.get_language();
+            let ctx2 = ctx.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                use crate::db::idb;
+                use crate::db::github::Repository;
+                let mut new_state = AppState::Empty;
+                if let Ok(db) = idb::open_waffle_db().await {
+                    let key = format!("latest_{}", language.to_lowercase());
+                    match idb::get_repo::<Vec<Repository>>(&db, &language, &key).await {
+                        Ok(Some(repos)) if !repos.is_empty() => {
+                            new_state = AppState::Normal;
+                        },
+                        _ => {}
+                    }
+                }
+                ctx2.data_mut(|d| d.insert_temp(Id::new("waffle_initial_state"), new_state));
+                ctx2.request_repaint();
+            });
+        }
+        // Apply initial state if set
+        let mut maybe_new_state = None;
+        ctx.data(|d| {
+            if let Some(new_state) = d.get_temp::<AppState>(Id::new("waffle_initial_state")) {
+                maybe_new_state = Some(new_state.clone());
+            }
+        });
+        if let Some(new_state) = maybe_new_state {
+            self.app_state = new_state;
+        }
         // Toast timer logic
         if let Some(_) = self.toast_message {
             let dt = ctx.input(|i| i.unstable_dt);
@@ -225,13 +227,6 @@ impl TemplateApp {
                 self.loading_state = LoadingState::Finishing { message: message.to_string() };
             },
             LoadingState::Finishing { .. } => {
-                let app_ptr = self as *mut TemplateApp;
-                wasm_bindgen_futures::spawn_local(async move {
-                    // SAFETY: This is safe because update() is single-threaded in egui/eframe
-                    unsafe {
-                        (*app_ptr).check_empty_and_update_state_async().await;
-                    }
-                });
                 // Show toast only if there is data after sync
                 if self.app_state == AppState::Normal {
                     self.toast_message = Some("Repositories synced!".to_owned());
