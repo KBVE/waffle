@@ -138,22 +138,32 @@ impl TemplateApp {
         // Perform initial async state check if needed
         if self.needs_initial_state_check {
             self.needs_initial_state_check = false;
-            let language = self.db.get_language();
             let ctx2 = ctx.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 use crate::db::idb;
                 use crate::db::github::Repository;
-                let mut new_state = AppState::Empty;
+                use crate::db::idb::LANGUAGES;
+                // use std::collections::HashMap;
+                let mut has_data = false;
                 if let Ok(db) = idb::open_waffle_db().await {
-                    let key = format!("latest_{}", language.to_lowercase());
-                    match idb::get_repo::<Vec<Repository>>(&db, &language, &key).await {
-                        Ok(Some(repos)) if !repos.is_empty() => {
-                            new_state = AppState::Normal;
-                        },
-                        _ => {}
+                    for &lang in LANGUAGES.iter() {
+                        if let Ok(Some(r)) = idb::get_repo::<Vec<Repository>>(&db, lang, lang).await {
+                            if !r.is_empty() {
+                                has_data = true;
+                                break;
+                            }
+                        }
                     }
                 }
-                ctx2.data_mut(|d| d.insert_temp(Id::new("waffle_initial_state"), new_state));
+                let new_state = if has_data { AppState::Normal } else { AppState::Empty };
+                // Store state in temp data for later use
+                ctx2.data_mut(|d| {
+                    d.insert_temp(Id::new("waffle_initial_state"), new_state.clone());
+                    // Set filtered_repos for the current language (will be loaded on demand)
+                    d.insert_temp(Id::new("waffle_filtered_repos"), Vec::<Repository>::new());
+                    // --- DEBUG: Add a toast message with state ---
+                    d.insert_temp(Id::new("waffle_debug_toast"), format!("Initial state: {:?}", new_state));
+                });
                 ctx2.request_repaint();
             });
         }
@@ -165,7 +175,27 @@ impl TemplateApp {
             }
         });
         if let Some(new_state) = maybe_new_state {
-            self.app_state = new_state;
+            let was_empty = self.app_state == AppState::Empty;
+            self.app_state = new_state.clone();
+            // If we just transitioned to Normal, load repos for current language
+            if was_empty && new_state == AppState::Normal {
+                self.load_filtered_repos_from_idb(ctx);
+            }
+        }
+        // --- Ensure filtered_repos is loaded if app_state is Normal and filtered_repos is empty ---
+        if self.app_state == AppState::Normal && (self.filtered_repos.is_none() || self.filtered_repos.as_ref().unwrap().is_empty()) {
+            let mut all_repos: Option<std::collections::HashMap<String, Vec<Repository>>> = None;
+            ctx.data(|d| {
+                if let Some(r) = d.get_temp::<std::collections::HashMap<String, Vec<Repository>>>(Id::new("waffle_all_repos")) {
+                    all_repos = Some(r.clone());
+                }
+            });
+            if let Some(map) = all_repos {
+                let lang = self.db.get_language();
+                let repos = map.get(&lang).cloned().unwrap_or_default();
+                self.waffle_state.set_ready(repos.clone());
+                self.filtered_repos = Some(repos);
+            }
         }
         // Toast timer logic
         if let Some(_) = self.toast_message {
@@ -177,6 +207,7 @@ impl TemplateApp {
         }
         // Loading state machine
         let mut error_to_trigger: Option<String> = None;
+        let mut should_load_repos = None;
         match &mut self.loading_state {
             LoadingState::Idle => {},
             LoadingState::Loading { kind, message: _, pending_language } => {
@@ -185,17 +216,8 @@ impl TemplateApp {
                         if let Some(lang) = pending_language.take() {
                             self.db.set_language(&lang);
                             self.db.load_from_indexeddb();
-                            // Immediately reload filtered repos for the new language
-                            let language = self.db.get_language();
-                            let ctx = ctx.clone();
-                            wasm_bindgen_futures::spawn_local(async move {
-                                let result = match crate::db::idb::open_waffle_db().await {
-                                    Ok(db_conn) => crate::db::idb::filter_repos_in_idb::<Repository>(&db_conn, &language, "").await.unwrap_or_default(),
-                                    Err(_) => vec![],
-                                };
-                                ctx.data_mut(|d| d.insert_temp(Id::new("waffle_filtered_repos"), result));
-                                ctx.request_repaint();
-                            });
+                            // Set flag to reload filtered repos for the new language after borrow ends
+                            should_load_repos = Some(ctx.clone());
                         }
                     },
                     LoadingKind::Sync => {
@@ -205,6 +227,7 @@ impl TemplateApp {
                             db.sync_and_store();
                             db.load_from_indexeddb();
                             // After sync, reload filtered repos
+                            crate::erust::uiux::javascript_interop::request_user_from_js();
                             let language = db.get_language();
                             let result = match crate::db::idb::open_waffle_db().await {
                                 Ok(db_conn) => crate::db::idb::filter_repos_in_idb::<Repository>(&db_conn, &language, "").await.unwrap_or_default(),
@@ -217,6 +240,8 @@ impl TemplateApp {
                     LoadingKind::ClearCache => {
                         self.db.clear_indexeddb();
                         self.db.load_from_indexeddb();
+                        // After clearing, clear filtered_repos too
+                        self.filtered_repos = Some(Vec::new());
                     },
                 }
                 let message = match kind {
@@ -246,6 +271,10 @@ impl TemplateApp {
         // Apply pending_app_state if set
         if let Some(new_state) = self.pending_app_state.take() {
             self.app_state = new_state;
+        }
+        // After match, do the actual repo load if needed
+        if let Some(ctx) = should_load_repos {
+            self.load_filtered_repos_from_idb(&ctx);
         }
         // Show loading spinner overlay if loading or finishing
         match &self.loading_state {
