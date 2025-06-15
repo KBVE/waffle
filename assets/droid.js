@@ -1,8 +1,14 @@
-import { droid, modUrls, workerStrings } from 'https://esm.sh/@kbve/droid@0.0.3/es2022/droid.mjs';
+import { droid, modUrls } from 'https://esm.sh/@kbve/droid';
 import * as comlink from 'https://esm.sh/comlink';
 
 (async () => {
   console.log('[DROID] init Library');
+
+    const workerStrings = {
+      canvasWorker: 'https://esm.sh/@kbve/droid/lib/workers/canvas-worker.js',
+      dbWorker: 'https://esm.sh/@kbve/droid/lib/workers/db-worker.js',
+      wsWorker: 'https://esm.sh/@kbve/droid/lib/workers/ws-worker.js',
+    };
 
   await droid({ workerURLs: workerStrings });
 
